@@ -90,7 +90,7 @@
   <script>
   (function(){
     'use strict';
-    var MAX_ANG=1050;
+    var MAX_ANG=1150;
     var CHUNK_PATH=location.pathname.indexOf('/spaces/v2/')===0?'assets/data/':'chunks/';
     var chunks=[
       {min:1,max:100,file:'chunk-1-100.json'},
@@ -103,7 +103,8 @@
       {min:651,max:750,file:'chunk-651-750.json'},
       {min:751,max:850,file:'chunk-751-850.json'},
       {min:851,max:950,file:'chunk-851-950.json'},
-      {min:951,max:1050,file:'chunk-951-1050.json'}
+      {min:951,max:1050,file:'chunk-951-1050.json'},
+      {min:1051,max:1150,file:'chunk-1051-1150.json'}
     ];
     var cache={}, currentData=null, currentAng=1, currentApproach='ctc', loadToken=0;
     var flatWords=[], activeIndex=-1, activeLine=null, autoScroll=true, objectUrls=[];
