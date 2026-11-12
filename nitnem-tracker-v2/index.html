@@ -790,5 +790,82 @@
       renderAll();
     </script>
   <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script>
+(function () {
+  var CFG = { apiKey: "AIzaSyADH6-AzMWjDLPzoxu7WZy1-vvYNsHXtxk", authDomain: "nitnem-tracker.firebaseapp.com", projectId: "nitnem-tracker", storageBucket: "nitnem-tracker.firebasestorage.app", messagingSenderId: "712584913445", appId: "1:712584913445:web:a7f0fd0d2082fc6e7755cc" };
+  var KEY = "nitnem-tracker-v2-web-states";
+  if (!window.firebase) return; // SDK blocked/offline -> local-only mode
+  try { firebase.initializeApp(CFG); } catch (e) { return; }
+  var auth = firebase.auth(), db = firebase.firestore();
+
+  var bar = document.createElement('div');
+  bar.className = 'no-print';
+  bar.style.cssText = 'text-align:center;margin:12px auto 0;padding:0 1rem;font-family:Jost,"Noto Sans Gurmukhi",system-ui,sans-serif;';
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.style.cssText = 'background:#131a2a;color:#f6efe3;border:1px solid #c9a24b;border-radius:999px;padding:8px 20px;font-size:13.5px;letter-spacing:.03em;cursor:pointer;';
+  btn.textContent = 'Google ਨਾਲ Sign In — progress save ਕਰੋ';
+  var note = document.createElement('div');
+  note.style.cssText = 'font-size:11.5px;color:#8a7a52;margin-top:5px;min-height:14px;';
+  bar.appendChild(btn); bar.appendChild(note);
+  var mast = document.querySelector('.masthead');
+  if (mast && mast.parentNode) mast.parentNode.insertBefore(bar, mast.nextSibling);
+  else document.body.insertBefore(bar, document.body.firstChild);
+
+  var user = null, lastSent = null, timer = null, applying = false;
+  function localVal() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+  function saveNow() {
+    if (!user || applying) return;
+    var v = localVal();
+    if (v === null || v === lastSent) return;
+    lastSent = v;
+    db.collection('progress').doc(user.uid).set({ json: v, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
+      .then(function () { note.textContent = 'Progress cloud ch save ho gaya \u2713'; })
+      .catch(function () { lastSent = null; });
+  }
+  setInterval(function () { if (user && !applying && localVal() !== lastSent) { clearTimeout(timer); timer = setTimeout(saveNow, 1000); } }, 2500);
+  window.addEventListener('beforeunload', saveNow);
+
+  btn.addEventListener('click', function () {
+    if (user) { auth.signOut(); return; }
+    var prov = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(prov).catch(function () { auth.signInWithRedirect(prov); });
+  });
+
+  auth.onAuthStateChanged(function (u) {
+    user = u;
+    if (!u) { btn.textContent = 'Google ਨਾਲ Sign In — progress save ਕਰੋ'; note.textContent = ''; lastSent = null; return; }
+    btn.textContent = 'Sign Out (' + (u.displayName || u.email || '') + ')';
+    note.textContent = 'Sign in ho gaya — progress sync ho rehi hai\u2026';
+    var ref = db.collection('progress').doc(u.uid);
+    ref.get().then(function (snap) {
+      var cloud = snap.exists ? (snap.data().json || null) : null;
+      var local = localVal();
+      if (cloud && cloud !== local) {
+        var applyVal = cloud;
+        try {
+          var cj = JSON.parse(cloud), lj = local ? JSON.parse(local) : null;
+          if (cj && lj && typeof cj === 'object' && typeof lj === 'object' && !Array.isArray(cj) && !Array.isArray(lj)) {
+            applyVal = JSON.stringify(Object.assign({}, lj, cj));
+          }
+        } catch (e) {}
+        applying = true;
+        try { localStorage.setItem(KEY, applyVal); } catch (e) {}
+        lastSent = applyVal;
+        ref.set({ json: applyVal, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(function () {});
+        note.textContent = 'Cloud wali progress mil gayi — page refresh ho reha hai\u2026';
+        setTimeout(function () { location.reload(); }, 700);
+      } else {
+        lastSent = local;
+        saveNow();
+      }
+    }).catch(function () {});
+  });
+})();
+</script>
 </body>
 </html>
