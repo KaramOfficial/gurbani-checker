@@ -274,6 +274,7 @@
         <div class="controls-row">
           <button type="button" class="pill-btn" id="arthBtn" aria-pressed="false" hidden>ਅਰਥ ਵੇਖੋ</button>
           <button type="button" class="pill-btn solid" id="printBtn">ਪ੍ਰਿੰਟ ਕਰੋ</button>
+          <button type="button" class="pill-btn" id="langBtn" aria-label="Switch to English">English</button>
         </div>
         <div class="bani-strip" role="tablist" aria-label="ਬਾਣੀ ਚੁਣੋ" id="baniStrip"></div>
         <div class="progress-row">
@@ -289,7 +290,7 @@
       <div class="sections" id="sections"></div>
       <footer class="foot no-print">
         <div class="rule" aria-hidden="true"><span class="bar"></span><span class="diamond"></span><span class="bar"></span></div>
-        <p>ਬਾਣੀ ਅਤੇ ਆਡੀਓ: Learn Shudh Gurbani (Gursevak)</p>
+        <p id="footCredit">ਬਾਣੀ ਅਤੇ ਆਡੀਓ: Learn Shudh Gurbani (Gursevak)</p>
         <p id="arthSource" hidden></p>
       </footer>
     </main>
@@ -383,13 +384,93 @@
       function persistArth() {
         try { window.localStorage.setItem("nitnem-arth", arthOn ? "on" : "off"); } catch (e) {}
       }
+      // ---- UI language: Punjabi (default) or English -----------------------
+      // Only app chrome switches. Bani text, Bani names and arth are content
+      // and are never touched. Choice persists in localStorage ("nitnem-lang").
+      let lang = "pa";
+      try { lang = window.localStorage.getItem("nitnem-lang") === "en" ? "en" : "pa"; } catch (e) {}
+      const STR = {
+        pa: {
+          title: "\u0a28\u0a3f\u0a24\u0a28\u0a47\u0a2e \u0a1f\u0a4d\u0a30\u0a48\u0a15\u0a30", appName: "\u0a28\u0a3f\u0a24\u0a28\u0a47\u0a2e", langBtn: "English",
+          arthShow: "\u0a05\u0a30\u0a25 \u0a35\u0a47\u0a16\u0a4b", arthHide: "\u0a05\u0a30\u0a25 \u0a1b\u0a41\u0a2a\u0a3e\u0a13", print: "\u0a2a\u0a4d\u0a30\u0a3f\u0a70\u0a1f \u0a15\u0a30\u0a4b",
+          chooseBani: "\u0a2c\u0a3e\u0a23\u0a40 \u0a1a\u0a41\u0a23\u0a4b",
+          footCredit: "\u0a2c\u0a3e\u0a23\u0a40 \u0a05\u0a24\u0a47 \u0a06\u0a21\u0a40\u0a13: Learn Shudh Gurbani (Gursevak)",
+          timeLabel: "\u0a06\u0a21\u0a40\u0a13 \u0a26\u0a3e \u0a38\u0a2e\u0a3e\u0a02", back10: "\u0a26\u0a38 \u0a38\u0a15\u0a3f\u0a70\u0a1f \u0a2a\u0a3f\u0a71\u0a1b\u0a47", fwd10: "\u0a26\u0a38 \u0a38\u0a15\u0a3f\u0a70\u0a1f \u0a05\u0a71\u0a17\u0a47",
+          seekLabel: "\u0a06\u0a21\u0a40\u0a13 \u0a05\u0a71\u0a17\u0a47 \u0a2a\u0a3f\u0a71\u0a1b\u0a47 \u0a15\u0a30\u0a4b", closeLabel: "\u0a06\u0a21\u0a40\u0a13 \u0a2c\u0a70\u0a26 \u0a15\u0a30\u0a4b",
+          play: "\u0a1a\u0a32\u0a3e\u0a13", pause: "\u0a30\u0a4b\u0a15\u0a4b", listen: "\u0a38\u0a41\u0a23\u0a4b",
+          playAudio: "\u0a06\u0a21\u0a40\u0a13 \u0a1a\u0a32\u0a3e\u0a13", pauseAudio: "\u0a06\u0a21\u0a40\u0a13 \u0a30\u0a4b\u0a15\u0a4b",
+          stateNotStarted: "\u0a38\u0a3c\u0a41\u0a30\u0a42 \u0a28\u0a39\u0a40\u0a02", stateLearning: "\u0a38\u0a3f\u0a71\u0a16 \u0a30\u0a3f\u0a39\u0a3e \u0a39\u0a3e\u0a02", stateLearned: "\u0a2f\u0a3e\u0a26 \u0a39\u0a4b \u0a17\u0a08",
+          section: "Section ", arthPrefix: "\u0a05\u0a30\u0a25: ",
+          partsLearned: (a, b) => a + " / " + b + " \u0a39\u0a3f\u0a71\u0a38\u0a47 \u0a2f\u0a3e\u0a26",
+          nextPart: (name) => "\u0a05\u0a17\u0a32\u0a3e \u0a39\u0a3f\u0a71\u0a38\u0a3e: " + name,
+          allLearned: (name) => name + " \u0a26\u0a47 \u0a38\u0a3e\u0a30\u0a47 \u0a39\u0a3f\u0a71\u0a38\u0a47 \u0a2f\u0a3e\u0a26 \u0a39\u0a4b \u0a17\u0a0f \u0a39\u0a28",
+          tabLearned: (a, b) => "\u0a2f\u0a3e\u0a26 " + a + "/" + b,
+          progressLabel: (name) => name + " \u0a26\u0a47 \u0a2f\u0a3e\u0a26 \u0a15\u0a40\u0a24\u0a47 \u0a39\u0a3f\u0a71\u0a38\u0a47",
+          nowListening: (name) => name + " \u0a38\u0a41\u0a23 \u0a30\u0a39\u0a47 \u0a39\u0a4b",
+          nowLine: (name, n) => name + " \u00b7 \u0a32\u0a3e\u0a08\u0a28 " + n,
+          lineListen: (tx) => "\u0a32\u0a3e\u0a08\u0a28 \u0a38\u0a41\u0a23\u0a4b: " + tx,
+          stateLabel: (name) => name + " \u0a26\u0a40 \u0a38\u0a3f\u0a71\u0a16\u0a23 \u0a39\u0a3e\u0a32\u0a24",
+        },
+        en: {
+          title: "Nitnem Tracker", appName: "Nitnem", langBtn: "\u0a2a\u0a70\u0a1c\u0a3e\u0a2c\u0a40",
+          arthShow: "Show Meaning", arthHide: "Hide Meaning", print: "Print",
+          chooseBani: "Choose Bani",
+          footCredit: "Bani and audio: Learn Shudh Gurbani (Gursevak)",
+          timeLabel: "Audio time", back10: "Back 10 seconds", fwd10: "Forward 10 seconds",
+          seekLabel: "Seek audio", closeLabel: "Close audio",
+          play: "Play", pause: "Pause", listen: "Listen",
+          playAudio: "Play audio", pauseAudio: "Pause audio",
+          stateNotStarted: "Not started", stateLearning: "Learning", stateLearned: "Learned",
+          section: "Section ", arthPrefix: "Meaning: ",
+          partsLearned: (a, b) => a + " / " + b + " sections learned",
+          nextPart: (name) => "Next section: " + name,
+          allLearned: (name) => "All sections of " + name + " learned",
+          tabLearned: (a, b) => "Learned " + a + "/" + b,
+          progressLabel: (name) => "Sections learned in " + name,
+          nowListening: (name) => name + " \u00b7 Playing",
+          nowLine: (name, n) => name + " \u00b7 Line " + n,
+          lineListen: (tx) => "Listen to line: " + tx,
+          stateLabel: (name) => "Learning state for " + name,
+        },
+      };
+      function t() { return STR[lang]; }
+      function fmtNum(n) { return lang === "en" ? String(n) : toGurmukhi(n); }
+      function stateText(v) {
+        const s = t();
+        return v === "learning" ? s.stateLearning : v === "learned" ? s.stateLearned : s.stateNotStarted;
+      }
+      function setLang(next) {
+        lang = next === "en" ? "en" : "pa";
+        try { window.localStorage.setItem("nitnem-lang", lang); } catch (e) {}
+        applyLang();
+      }
+      function applyLang() {
+        const s = t();
+        document.documentElement.lang = lang === "en" ? "en" : "pa";
+        document.title = s.title;
+        const h1 = document.querySelector(".masthead h1");
+        if (h1) h1.textContent = s.appName;
+        printBtn.textContent = s.print;
+        langBtn.textContent = s.langBtn;
+        langBtn.setAttribute("aria-label", lang === "en" ? "Switch to Punjabi" : "Switch to English");
+        baniStrip.setAttribute("aria-label", s.chooseBani);
+        nowTime.setAttribute("aria-label", s.timeLabel);
+        seekEl.setAttribute("aria-label", s.seekLabel);
+        $("backBtn").setAttribute("aria-label", s.back10);
+        $("fwdBtn").setAttribute("aria-label", s.fwd10);
+        $("closeBtn").setAttribute("aria-label", s.closeLabel);
+        $("footCredit").textContent = s.footCredit;
+        renderAll();
+        window.dispatchEvent(new CustomEvent("nt-lang"));
+      }
+
 
       // ---- DOM refs -----------------------------------------------------------
       const $ = (id) => document.getElementById(id);
       const audio = $("audio");
       const baniNameEl = $("baniName"), learnedCountEl = $("learnedCount");
       const nextLinkEl = $("nextLink"), allDoneEl = $("allDone");
-      const arthBtn = $("arthBtn"), printBtn = $("printBtn");
+      const arthBtn = $("arthBtn"), printBtn = $("printBtn"), langBtn = $("langBtn");
       const baniStrip = $("baniStrip");
       const progressTrack = $("progressTrack"), progressFill = $("progressFill"), progressPct = $("progressPct");
       const mainEl = $("main"), sectionsEl = $("sections");
@@ -422,12 +503,12 @@
         nowBar.hidden = false;
         mainEl.classList.add("playing");
         nowTitle.textContent = playing.mode === "section"
-          ? section.name + " ਸੁਣ ਰਹੇ ਹੋ"
-          : section.name + " · ਲਾਈਨ " + toGurmukhi(playing.lineIdx + 1);
+          ? t().nowListening(section.name)
+          : t().nowLine(section.name, fmtNum(playing.lineIdx + 1));
         nowTime.textContent = formatTime(posSec) + " / " + formatTime(durSec);
         seekEl.value = durSec > 0 ? Math.round((posSec / durSec) * 1000) : 0;
-        pauseBtn.innerHTML = paused ? ICON_PLAY + " ਚਲਾਓ" : ICON_PAUSE + " ਰੋਕੋ";
-        pauseBtn.setAttribute("aria-label", paused ? "ਆਡੀਓ ਚਲਾਓ" : "ਆਡੀਓ ਰੋਕੋ");
+        pauseBtn.innerHTML = paused ? ICON_PLAY + " " + t().play : ICON_PAUSE + " " + t().pause;
+        pauseBtn.setAttribute("aria-label", paused ? t().playAudio : t().pauseAudio);
       }
 
       function refreshLineHighlights() {
@@ -440,8 +521,8 @@
           const idx = Number(btn.getAttribute("data-section"));
           const isThis = playing && playing.section === idx && playing.mode === "section";
           const sec = currentBani().sections[idx];
-          btn.innerHTML = (isThis && !paused ? ICON_PAUSE + " ਰੋਕੋ" : ICON_PLAY + " ਸੁਣੋ");
-          btn.setAttribute("aria-label", (isThis && !paused ? sec.name + " ਰੋਕੋ" : sec.name + " ਸੁਣੋ"));
+          btn.innerHTML = (isThis && !paused ? ICON_PAUSE + " " + t().pause : ICON_PLAY + " " + t().listen);
+          btn.setAttribute("aria-label", sec.name + " " + (isThis && !paused ? t().pause : t().listen));
         });
       }
 
@@ -624,11 +705,11 @@
         const statefulIdx = [];
         bani.sections.forEach((s, i) => { if (isPlayable(s)) statefulIdx.push(i); });
         const learnedCount = statefulIdx.filter((i) => stateOf(bani.slug, i) === "learned").length;
-        learnedCountEl.textContent = toGurmukhi(learnedCount) + " / " + toGurmukhi(statefulIdx.length) + " ਹਿੱਸੇ ਯਾਦ";
+        learnedCountEl.textContent = t().partsLearned(fmtNum(learnedCount), fmtNum(statefulIdx.length));
         const next = statefulIdx.find((i) => stateOf(bani.slug, i) !== "learned");
         if (next !== undefined) {
           nextLinkEl.hidden = false;
-          nextLinkEl.textContent = "ਅਗਲਾ ਹਿੱਸਾ: " + bani.sections[next].name;
+          nextLinkEl.textContent = t().nextPart(bani.sections[next].name);
           nextLinkEl.onclick = () => {
             const target = document.getElementById("section-" + next);
             if (target) target.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -638,14 +719,14 @@
           nextLinkEl.hidden = true;
           if (statefulIdx.length > 0) {
             allDoneEl.hidden = false;
-            allDoneEl.textContent = bani.name + " ਦੇ ਸਾਰੇ ਹਿੱਸੇ ਯਾਦ ਹੋ ਗਏ ਹਨ";
+            allDoneEl.textContent = t().allLearned(bani.name);
           } else allDoneEl.hidden = true;
         }
 
         const hasArth = baniHasArth(bani);
         arthBtn.hidden = !hasArth;
         arthBtn.setAttribute("aria-pressed", arthOn ? "true" : "false");
-        arthBtn.textContent = arthOn ? "ਅਰਥ ਛੁਪਾਓ" : "ਅਰਥ ਵੇਖੋ";
+        arthBtn.textContent = arthOn ? t().arthHide : t().arthShow;
         arthBtn.classList.toggle("on", arthOn);
 
         // Bani selector pills
@@ -663,21 +744,21 @@
           btn.setAttribute("aria-selected", b.slug === bani.slug ? "true" : "false");
           const name = el("span", "bn", b.name);
           btn.appendChild(name);
-          if (total > 0) btn.appendChild(el("span", "bc", "ਯਾਦ " + toGurmukhi(learned) + "/" + toGurmukhi(total)));
+          if (total > 0) btn.appendChild(el("span", "bc", t().tabLearned(fmtNum(learned), fmtNum(total))));
           btn.addEventListener("click", () => selectBani(b.slug));
           baniStrip.appendChild(btn);
         });
 
         const pct = statefulIdx.length > 0 ? Math.round((learnedCount / statefulIdx.length) * 100) : 0;
         progressFill.style.width = pct + "%";
-        progressPct.textContent = toGurmukhi(pct) + "%";
+        progressPct.textContent = fmtNum(pct) + "%";
         progressTrack.setAttribute("aria-valuenow", learnedCount);
         progressTrack.setAttribute("aria-valuemax", statefulIdx.length);
-        progressTrack.setAttribute("aria-label", bani.name + " ਦੇ ਯਾਦ ਕੀਤੇ ਹਿੱਸੇ");
+        progressTrack.setAttribute("aria-label", t().progressLabel(bani.name));
 
         if (showArth() && bani.arthSource) {
           arthSourceEl.hidden = false;
-          arthSourceEl.textContent = "ਅਰਥ: " + bani.arthSource;
+          arthSourceEl.textContent = t().arthPrefix + bani.arthSource;
         } else arthSourceEl.hidden = true;
       }
 
@@ -710,15 +791,15 @@
 
           const head = el("div", "card-head no-print");
           const headLeft = el("div");
-          headLeft.appendChild(el("p", "sec-kicker font-label", "Section " + toGurmukhi(sectionIdx + 1)));
+          headLeft.appendChild(el("p", "sec-kicker font-label", t().section + fmtNum(sectionIdx + 1)));
           headLeft.appendChild(el("h2", "sec-name font-display", section.name));
           headLeft.appendChild(el("span", "sec-dur font-label", formatTime(sectionDuration(section))));
           head.appendChild(headLeft);
           const playBtn = el("button", "play-btn");
           playBtn.type = "button";
           playBtn.setAttribute("data-section", sectionIdx);
-          playBtn.innerHTML = ICON_PLAY + " ਸੁਣੋ";
-          playBtn.setAttribute("aria-label", section.name + " ਸੁਣੋ");
+          playBtn.innerHTML = ICON_PLAY + " " + t().listen;
+          playBtn.setAttribute("aria-label", section.name + " " + t().listen);
           playBtn.addEventListener("click", () => onSectionPlayTap(sectionIdx));
           head.appendChild(playBtn);
           card.appendChild(head);
@@ -732,7 +813,7 @@
             if (timed) {
               p.setAttribute("role", "button");
               p.tabIndex = 0;
-              p.setAttribute("aria-label", "ਲਾਈਨ ਸੁਣੋ: " + line.t);
+              p.setAttribute("aria-label", t().lineListen(line.t));
               p.addEventListener("click", () => onLineTap(sectionIdx, lineIdx));
               p.addEventListener("keydown", (ev) => {
                 if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onLineTap(sectionIdx, lineIdx); }
@@ -746,10 +827,10 @@
 
           const stateRow = el("div", "state-row no-print");
           stateRow.setAttribute("role", "radiogroup");
-          stateRow.setAttribute("aria-label", section.name + " ਦੀ ਸਿੱਖਣ ਹਾਲਤ");
+          stateRow.setAttribute("aria-label", t().stateLabel(section.name));
           const current = stateOf(bani.slug, sectionIdx);
           STATE_OPTIONS.forEach((opt) => {
-            const b = el("button", "state-btn" + (current === opt.value ? " sel" + (opt.value === "learned" ? " learned" : "") : ""), opt.label);
+            const b = el("button", "state-btn" + (current === opt.value ? " sel" + (opt.value === "learned" ? " learned" : "") : ""), stateText(opt.value));
             b.type = "button";
             b.setAttribute("role", "radio");
             b.setAttribute("aria-checked", current === opt.value ? "true" : "false");
@@ -779,6 +860,7 @@
 
       arthBtn.addEventListener("click", () => { arthOn = !arthOn; persistArth(); renderAll(); });
       printBtn.addEventListener("click", () => window.print());
+      langBtn.addEventListener("click", () => setLang(lang === "en" ? "pa" : "en"));
       pauseBtn.addEventListener("click", togglePause);
       $("closeBtn").addEventListener("click", stopPlayback);
       $("backBtn").addEventListener("click", () => seekToElapsed(posSec - 10));
@@ -787,7 +869,7 @@
         if (durSec > 0) seekToElapsed((Number(seekEl.value) / 1000) * durSec);
       });
 
-      renderAll();
+      applyLang();
     </script>
   <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
 
@@ -808,7 +890,7 @@
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.style.cssText = 'background:#131a2a;color:#f6efe3;border:1px solid #c9a24b;border-radius:999px;padding:8px 20px;font-size:13.5px;letter-spacing:.03em;cursor:pointer;';
-  btn.textContent = 'Google ਨਾਲ Sign In — progress save ਕਰੋ';
+  btn.textContent = '';
   var note = document.createElement('div');
   note.style.cssText = 'font-size:11.5px;color:#8a7a52;margin-top:5px;min-height:14px;';
   bar.appendChild(btn); bar.appendChild(note);
@@ -817,6 +899,17 @@
   else document.body.insertBefore(bar, document.body.firstChild);
 
   var user = null, lastSent = null, timer = null, applying = false;
+  function fLang() { try { return localStorage.getItem('nitnem-lang') === 'en' ? 'en' : 'pa'; } catch (e) { return 'pa'; } }
+  var FB = {
+    pa: { signIn: 'Google ਨਾਲ Sign In — progress save ਕਰੋ', syncing: 'Sign in ho gaya — progress sync ho rehi hai…', saved: 'Progress cloud ch save ho gaya ✓', cloud: 'Cloud wali progress mil gayi — page refresh ho reha hai…' },
+    en: { signIn: 'Sign in with Google — save your progress', syncing: 'Signed in — progress is syncing…', saved: 'Progress saved to the cloud ✓', cloud: 'Found your cloud progress — refreshing the page…' }
+  };
+  var noteKey = '';
+  function paintBtn() { btn.textContent = user ? 'Sign Out (' + (user.displayName || user.email || '') + ')' : FB[fLang()].signIn; }
+  function setNote(k) { noteKey = k; note.textContent = k ? FB[fLang()][k] : ''; }
+  window.addEventListener('nt-lang', function () { paintBtn(); setNote(noteKey); });
+  paintBtn();
+
   function localVal() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
   function saveNow() {
     if (!user || applying) return;
@@ -824,7 +917,7 @@
     if (v === null || v === lastSent) return;
     lastSent = v;
     db.collection('progress').doc(user.uid).set({ json: v, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
-      .then(function () { note.textContent = 'Progress cloud ch save ho gaya \u2713'; })
+      .then(function () { setNote('saved'); })
       .catch(function () { lastSent = null; });
   }
   setInterval(function () { if (user && !applying && localVal() !== lastSent) { clearTimeout(timer); timer = setTimeout(saveNow, 1000); } }, 2500);
@@ -838,9 +931,9 @@
 
   auth.onAuthStateChanged(function (u) {
     user = u;
-    if (!u) { btn.textContent = 'Google ਨਾਲ Sign In — progress save ਕਰੋ'; note.textContent = ''; lastSent = null; return; }
-    btn.textContent = 'Sign Out (' + (u.displayName || u.email || '') + ')';
-    note.textContent = 'Sign in ho gaya — progress sync ho rehi hai\u2026';
+    if (!u) { paintBtn(); setNote(''); lastSent = null; return; }
+    paintBtn();
+    setNote('syncing');
     var ref = db.collection('progress').doc(u.uid);
     ref.get().then(function (snap) {
       var cloud = snap.exists ? (snap.data().json || null) : null;
@@ -857,7 +950,7 @@
         try { localStorage.setItem(KEY, applyVal); } catch (e) {}
         lastSent = applyVal;
         ref.set({ json: applyVal, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(function () {});
-        note.textContent = 'Cloud wali progress mil gayi — page refresh ho reha hai\u2026';
+        setNote('cloud');
         setTimeout(function () { location.reload(); }, 700);
       } else {
         lastSent = local;
