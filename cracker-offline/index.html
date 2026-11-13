@@ -46,7 +46,7 @@
   <div id="hearing"></div>
 </header>
 <div id="msg"></div>
-<p class="note">Tap any line to tell me “I'm here”. This version recognizes your voice ON THE PHONE itself (IndicConformer model trained on Gurbani, ~138 MB, downloaded once) — no audio ever leaves the device. First load needs internet for the model + track; after that it works fully offline.</p>
+<p class="note">Tap any line to tell me “I'm here”. This version recognizes your voice ON THE PHONE itself (IndicConformer model trained on Gurbani, ~480 MB downloaded once — the compact 138 MB build uses integer ops the browser runtime cannot execute, verified) — no audio ever leaves the device. First load needs internet for the model + track; after that it works fully offline.</p>
 <main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
 <footer>
   <button id="listenBtn" class="primary">🎙️ Listen</button>
@@ -138,7 +138,7 @@
   // runs in the browser via ONNX Runtime Web (WASM). Audio never leaves
   // the phone. Streaming = sliding-window greedy CTC decode every ~1.2 s
   // over the last seconds of mic audio; finalized words feed the tracker.
-  var MODEL_URL = "https://huggingface.co/surindersinghssj/indicconformer-pa-v3-kirtan/resolve/main/onnx-pa-only/int8/indicconformer-pa-ctc.onnx";
+  var MODEL_URL = "https://huggingface.co/surindersinghssj/indicconformer-pa-v3-kirtan/resolve/main/onnx-pa-only/fp32/indicconformer-pa-ctc.onnx";
   var session = null, engineReady = false, engineBusy = false;
   var micCtx = null, micStream = null, micNode = null;
   var pcmChunks = [], pcmLen = 0, pcmBase = 0; // pcmBase = absolute sample idx of buffer start
@@ -150,11 +150,10 @@
   function loadEngine(){
     if (session || loadEngine._started) return;
     loadEngine._started = true;
-    setEngine("Engine: downloading model (~138 MB, once)…");
+    setEngine("Engine: downloading model (~480 MB, once)…");
     ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
     ort.env.wasm.wasmPaths = new URL("vendor/", window.location.href).href;
-    fetch(MODEL_URL).then(function(r){ return r.arrayBuffer(); })
-      .then(function(buf){ return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] }); })
+    ort.InferenceSession.create(MODEL_URL, { executionProviders: ['wasm'] })
       .then(function(s){ session = s; engineReady = true; setEngine("Engine: ready — on-device, offline 🟢"); })
       .catch(function(e){ loadEngine._started = false; setEngine("Engine: load failed — tap Listen to retry"); });
   }
