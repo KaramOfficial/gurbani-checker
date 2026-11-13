@@ -50,7 +50,7 @@
     <span class="pill" id="wordPill">Words heard: 0</span>
     <span class="pill" id="enginePill">Engine: not loaded</span>
   </div>
-  <div id="engineCard"><div id="engineText">🧠 Listening model: not downloaded yet — it loads automatically (one-time, ~480 MB, use Wi-Fi).</div><div class="bar"><div id="engineBarFill"></div></div><div id="engineSub" style="font-size:12px;opacity:.75">After this one download, listening works fully offline.</div></div>
+  <div id="engineCard"><div id="engineText">🧠 Listening model: not downloaded yet — it loads automatically (one-time, ~480 MB, use Wi-Fi).</div><div class="bar"><div id="engineBarFill"></div></div><div id="engineSub" style="font-size:12px;opacity:.75">After this one download, listening works fully offline.</div><button id="engineBtn" style="margin-top:8px;width:100%;padding:12px;font-size:16px;font-weight:600;border-radius:10px;border:1px solid #a98f3d;background:var(--gold);color:#231a05;cursor:pointer">⬇️ Download model &amp; get ready</button><div style="font-size:11px;opacity:.55;margin-top:6px">Offline build v0.4 · Nov 13</div></div>
   <div id="hearing"></div>
 </header>
 <div id="msg"></div>
@@ -64,7 +64,13 @@
 <audio id="refAudio" preload="auto" src="https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3"></audio>
 
 <script>
-  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function(){}); }
+  if ("serviceWorker" in navigator) {
+    var hadController = !!navigator.serviceWorker.controller, reloadedOnce = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if (hadController && !reloadedOnce) { reloadedOnce = true; location.reload(); }
+    });
+    navigator.serviceWorker.register("sw.js").then(function(reg){ if (reg) reg.update(); }).catch(function(){});
+  }
 </script>
 <script src="vendor/ort.wasm.min.js"></script>
 <script src="mel.js"></script>
@@ -160,6 +166,8 @@
   var engineText = document.getElementById('engineText');
   var engineSub = document.getElementById('engineSub');
   var engineBarFill = document.getElementById('engineBarFill');
+  var engineBtn = document.getElementById('engineBtn');
+  if (engineBtn) engineBtn.addEventListener('click', function(){ loadEngine(); });
   function fmtMB(n){ return (n / 1048576).toFixed(0) + " MB"; }
   function fetchWithProgress(url, onProgress){
     return fetch(url).then(function(r){
@@ -188,6 +196,7 @@
     ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
     ort.env.wasm.wasmPaths = new URL("vendor/", window.location.href).href;
     engineCard.className = ""; engineCard.style.display = "block";
+    if (engineBtn){ engineBtn.disabled = true; engineBtn.textContent = "⬇️ Downloading…"; }
     engineText.textContent = "⬇️ Step 1 of 2 · Downloading the listening model (one-time)…";
     setEngine("Engine: downloading…");
     fetchWithProgress(MODEL_URL, function(got, total){
@@ -211,6 +220,7 @@
       return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
     }).then(function(s){
       session = s; engineReady = true;
+      if (engineBtn){ engineBtn.disabled = true; engineBtn.textContent = "✅ Ready — works offline"; engineBtn.style.background = "#7da05c"; engineBtn.style.color = "#fff"; }
       engineCard.className = "ready";
       engineText.textContent = "✅ Model ready — listening now works fully offline.";
       engineSub.textContent = "The model is saved on this device; next visits skip the download.";
@@ -218,6 +228,7 @@
       if (listening) startDecodeLoop();
     }).catch(function(e){
       loadEngine._started = false;
+      if (engineBtn){ engineBtn.disabled = false; engineBtn.textContent = "↻ Retry download"; }
       engineCard.className = "failed";
       engineText.textContent = "⚠️ Model download failed — check the connection, then tap 🎙️ Listen to retry.";
       engineSub.textContent = String(e && e.message || e);
