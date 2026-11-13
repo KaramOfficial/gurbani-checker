@@ -17,6 +17,15 @@
   .pill.tentative{background:var(--goldsoft)}
   .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
   .pill.lost{background:#f6dcd8;border-color:var(--bad);color:var(--bad);font-weight:700}
+  .pill.diverged{background:#f7e3c3;border-color:#d9a441;color:#8a6414;font-weight:700}
+  #suggestPop{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:7;background:var(--card);border:1.5px solid var(--gold);border-radius:14px;box-shadow:0 8px 28px rgba(60,45,10,.28);padding:10px 12px;display:flex;gap:10px;align-items:center;max-width:94vw;width:430px}
+  #suggestPop[hidden]{display:none}
+  #suggestPop .sg-main{flex:1;min-width:0}
+  #suggestPop .sg-title{font-size:12px;opacity:.7}
+  #suggestPop .sg-line{font-size:18px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #suggestPop .sg-sub{font-size:12px;opacity:.7}
+  #sgGo{flex:none;width:52px;height:52px;border-radius:50%;background:var(--gold);border-color:var(--gold);color:#fff;font-size:22px;padding:0}
+  #sgX{flex:none;width:34px;height:34px;border-radius:50%;font-size:14px;padding:0;opacity:.75}
   #hearing{font-size:12.5px;opacity:.7;min-height:16px;margin-top:6px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   main{padding:10px 14px 120px;max-width:760px;margin:0 auto}
   .paudi{font-size:13px;letter-spacing:.12em;color:var(--gold);margin:18px 0 4px;font-weight:700}
@@ -29,6 +38,8 @@
   button.primary{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
   button.on{background:var(--bad);border-color:var(--bad);color:#fff}
   button:disabled{opacity:.45}
+  header.nudged{animation:nudgeflash .75s ease}
+  @keyframes nudgeflash{0%{box-shadow:inset 0 0 0 3px #e8a33d}100%{box-shadow:inset 0 0 0 0 rgba(232,163,61,0)}}
   #msg{max-width:760px;margin:8px auto 0;padding:0 14px;font-size:13.5px;color:var(--bad)}
   .note{max-width:760px;margin:4px auto 0;padding:0 14px;font-size:12.5px;opacity:.7}
 </style>
@@ -50,12 +61,28 @@
     <button class="speedBtn" data-speed="1.75" style="font-size:13px;padding:6px 12px">1.75×</button>
     <button class="speedBtn" data-speed="2" style="font-size:13px;padding:6px 12px">2×</button>
   </div>
+  <div id="escapeRow" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12.5px;opacity:.75">When I skip:</span>
+    <button class="escBtn" data-esc="manual" style="font-size:13px;padding:6px 12px">Stay put</button>
+    <button class="escBtn" data-esc="suggest" style="font-size:13px;padding:6px 12px">Suggest</button>
+    <button class="escBtn" data-esc="auto" style="font-size:13px;padding:6px 12px">Auto-move</button>
+  </div>
 </header>
 <div id="msg"></div>
-<p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). If you say a wrong line, the phone gives a tiny buzz and I stay with you — I only move if you pause and start elsewhere, or keep reciting the new place.</p>
+<p class="note">Tap any line to tell me “I'm here”. Once I've followed you for a bit, I lock on and won't jump around — if you skip or say a wrong line, you get a tiny buzz and I stay. Come back to the line, or tap “I'm somewhere else”. “When I skip” decides the rest: Stay put, Suggest a jump, or Auto-move on very strong evidence. Recognizer: your browser's Punjabi speech recognition (Chrome on Android works best).</p>
 <main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
+<div id="suggestPop" hidden>
+  <div class="sg-main">
+    <div class="sg-title">You seem to be here:</div>
+    <div class="sg-line" id="sgLine"></div>
+    <div class="sg-sub" id="sgSub"></div>
+  </div>
+  <button id="sgGo" aria-label="Jump there">➜</button>
+  <button id="sgX" aria-label="Dismiss">✕</button>
+</div>
 <footer>
   <button id="listenBtn" class="primary">🎙️ Listen</button>
+  <button id="resyncBtn">📍 I'm somewhere else</button>
   <button id="hintBtn" disabled>💡 Take Hint</button>
   <button id="simBtn">▶️ Demo</button>
 </footer>
@@ -95,7 +122,7 @@
       item.l.words.forEach(function(w){ words.push({w:w.word, line:li, start:w.start, end:w.end}); });
       lines.push({text:item.l.text, firstWord:first, lastWord:words.length-1, paudi:item.paudi});
     });
-    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; })); tracker.setEscapeMode(escapeMode);
     render();
     updateUI(false);
   }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
@@ -127,8 +154,17 @@
     var snap = tracker.snapshot();
     var curWord = Math.min(snap.wordIdx, words.length-1);
     var curLine = words.length ? words[curWord].line : 0;
-    statePill.className = 'pill ' + (listening || simTimer ? snap.state : 'searching');
-    statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
+    lastSnap = snap;
+    if ((listening || simTimer) && snap.mode === 'diverged') {
+      statePill.className = 'pill diverged';
+      statePill.textContent = 'Off-track · staying with you';
+    } else if ((listening || simTimer) && snap.mode === 'locked') {
+      statePill.className = 'pill locked';
+      statePill.textContent = 'Locked · following you';
+    } else {
+      statePill.className = 'pill ' + (listening || simTimer ? snap.state : 'searching');
+      statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
+    }
     linePill.textContent = 'Line ' + (curLine+1) + ' of ' + lines.length;
     wordPill.textContent = 'Words heard: ' + snap.eventsSeen;
     hintBtn.disabled = false; // hint works from the last known position, even after Stop
@@ -140,6 +176,23 @@
       var wEl = document.getElementById('w-'+wi);
       if (wEl) wEl.classList.toggle('done', wi < snap.wordIdx);
     }
+
+    // suggestion popup (Suggest escape mode): one frozen offer per episode
+    var sg = snap.suggest, pop = document.getElementById('suggestPop');
+    if (pop) {
+      if (sg && !sgDismissed) {
+        if (sgShownFor !== sg.wordIdx) {
+          sgShownFor = sg.wordIdx;
+          document.getElementById('sgLine').textContent = lines[sg.line] ? lines[sg.line].text : '';
+          document.getElementById('sgSub').textContent = 'Line ' + (sg.line + 1) + ' · ' + sg.streak + ' words matched in a row';
+          pop.hidden = false;
+          clearTimeout(sgTimer);
+          sgTimer = setTimeout(function(){ pop.hidden = true; sgDismissed = true; }, 6000);
+        }
+      } else if (!sg) {
+        pop.hidden = true; sgShownFor = -1; sgDismissed = false; clearTimeout(sgTimer);
+      }
+    }
   }
 
   // ---------- pause marking + nudge ----------
@@ -147,8 +200,8 @@
   // passage that starts after a pause may move the tracker quickly;
   // one that starts mid-flow must prove itself. And when the tracker
   // decides the words don't fit here (snapshot.nudge), the page gives
-  // the tiniest possible signal: a 35 ms buzz, or a barely-there beep
-  // where vibration doesn't exist.
+  // a small but unmissable signal: a two-pulse buzz AND a soft tone
+  // AND a brief amber flash on the header.
   var lastFeedAt = 0;
   function feedTracked(w, timeGap){
     var now = Date.now();
@@ -162,18 +215,21 @@
       if (!beepCtx) beepCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (beepCtx.state === 'suspended') beepCtx.resume();
       var t = beepCtx.currentTime, o = beepCtx.createOscillator(), g = beepCtx.createGain();
-      o.type = 'sine'; o.frequency.value = 720;
+      o.type = 'sine'; o.frequency.value = 660;
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.06, t + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      g.gain.exponentialRampToValueAtTime(0.12, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
       o.connect(g); g.connect(beepCtx.destination);
-      o.start(t); o.stop(t + 0.1);
+      o.start(t); o.stop(t + 0.13);
     } catch(e){}
   }
   function doNudge(){
-    if (window.NativeBridge && NativeBridge.nudge) { try { NativeBridge.nudge(); return; } catch(e){} }
-    if (navigator.vibrate) { try { navigator.vibrate(35); return; } catch(e){} }
-    softBeep();
+    var buzzed = false;
+    if (window.NativeBridge && NativeBridge.nudge) { try { NativeBridge.nudge(); buzzed = true; } catch(e){} }
+    if (!buzzed && navigator.vibrate) { try { navigator.vibrate([60, 40, 60]); buzzed = true; } catch(e){} }
+    softBeep(); // a soft tone as well — feel it AND hear it, still small
+    var hd = document.querySelector('header');
+    if (hd) { hd.classList.remove('nudged'); void hd.offsetWidth; hd.classList.add('nudged'); setTimeout(function(){ hd.classList.remove('nudged'); }, 800); }
   }
   function checkNudge(snap){ if (snap && snap.nudge) doNudge(); }
 
@@ -278,6 +334,52 @@
   });
   paintSpeed();
 
+  // ---------- escape mode (what happens when you skip / go off-track) ----------
+  // manual (default): I stay put — you come back, tap a line, or tap
+  // "I'm somewhere else". suggest: I offer the line I think you're on
+  // in a small popup; you tap the arrow to take it. auto: I move there
+  // myself, but only on very strong evidence (a long clean stretch
+  // recited somewhere else, with no refrain tie).
+  var escapeMode = 'manual';
+  try { escapeMode = localStorage.getItem('cracker-escape') || 'manual'; } catch(e){}
+  var lastSnap = null, sgShownFor = -1, sgDismissed = false, sgTimer = null;
+  function paintEscape(){
+    Array.prototype.forEach.call(document.querySelectorAll('.escBtn'), function(b){
+      var on = b.getAttribute('data-esc') === escapeMode;
+      b.style.background = on ? 'var(--gold)' : 'var(--card)';
+      b.style.color = on ? '#fff' : 'var(--ink)';
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.escBtn'), function(b){
+    b.addEventListener('click', function(){
+      escapeMode = b.getAttribute('data-esc');
+      try { localStorage.setItem('cracker-escape', escapeMode); } catch(e){}
+      if (tracker) tracker.setEscapeMode(escapeMode);
+      paintEscape();
+    });
+  });
+  paintEscape();
+  document.getElementById('sgGo').addEventListener('click', function(){
+    if (tracker) tracker.acceptSuggestion();
+    document.getElementById('suggestPop').hidden = true;
+    updateUI(true);
+  });
+  document.getElementById('sgX').addEventListener('click', function(){
+    document.getElementById('suggestPop').hidden = true;
+    sgDismissed = true;
+  });
+  document.getElementById('resyncBtn').addEventListener('click', function(){
+    if (tracker) { tracker.unlockToShadow(); updateUI(true); }
+  });
+  // the app's volume-key double-press lands here: accept an open
+  // suggestion, otherwise re-sync to wherever the shadow is tracking
+  window.AppUnlock = function(){
+    if (!tracker) return;
+    if (lastSnap && lastSnap.suggest) tracker.acceptSuggestion();
+    else tracker.unlockToShadow();
+    updateUI(true);
+  };
+
   // ---------- hint ----------
   // WORD-ANCHORED HINT (user direction 2026-11-13, replaces the
   // Smart/Next-line/Same-line modes, which never matched how he actually
@@ -343,7 +445,7 @@
     if (!tracker) return;
     stopListen();
     tappedLine = -1;
-    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; })); tracker.setEscapeMode(escapeMode);
     var i = 0, vocab = words.map(function(w){ return w.w; });
     simBtn.textContent = "⏹ Demo";
     simTimer = setInterval(function(){

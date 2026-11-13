@@ -91,6 +91,30 @@
     this.nudgeAt = -1000000;
     this.episodeNudged = false;
     this._nudge = false;
+    // near-move (lurch) detection: the beam follows skips of a line or
+    // two silently — a single feed that moves the REPORTED position by
+    // 5+ words while a lock is fresh is a skip/repeat, and must buzz
+    this.lastRep = -1;      // last reported (snapshot) wordIdx
+    this.lurchCalm = 99;    // feeds since the last big lurch
+    this.justJumped = false; // a committed jump is deliberate — no buzz for it
+    // ---- lock layer (v4) ----
+    this.mode = "following"; // following | locked | diverged
+    this.anchor = -1;        // reported position while locked/diverged (next expected word)
+    this.frozenAnchor = -1;
+    this.spanWords = 0;      // beam-advanced words in the current lock run
+    this.spanFrom = -1;      // beam idx where the current lock run began
+    this.prevBeamIdx = 0;
+    this.beamGap = 0;
+    this.missRun = 0;
+    this.winMiss = [];       // last 6 walk outcomes while locked (1 = miss)
+    this.resumeRun = 0;
+    this.resumeAnchor = -1;
+    this.beamRun = 0;        // consecutive feeds the beam tracked consistently (the shadow)
+    this.beamRunPos = -1;
+    this.escapeMode = "manual"; // manual | suggest | auto — set by the page
+    this._suggest = null;
+    this._jumped = false;
+    this.buzzLatched = false;
   }
 
   // The page calls this when the reciter paused before the incoming
@@ -204,7 +228,7 @@
     var isNew = !(p && Math.abs(targetEnd - (p.end + (this.eventsSeen - p.at))) <= 2);
     if (isNew) {
       this.pendingJump = p = { end: targetEnd, at: this.eventsSeen, count: 1 };
-      if (protectedRun && !gated && cand.local < 0.5 &&
+      if (this.mode === "following" && protectedRun && !gated && cand.local < 0.5 &&
           !this.episodeNudged && this.eventsSeen - this.nudgeAt >= 15) {
         this._nudge = true;
         this.nudgeAt = this.eventsSeen;
@@ -230,6 +254,7 @@
     this.lastJumpAt = this.eventsSeen;
     this.pendingJump = null;
     this.episodeNudged = false;
+    this.justJumped = true;
     return true;
   };
 
@@ -249,6 +274,16 @@
     this.pausePending = false;
     this.wasLockedAt = -1000000;
     this.episodeNudged = false;
+    this.lastRep = -1;
+    this.lurchCalm = 99;
+    this.mode = "following";
+    this.anchor = -1;
+    this._suggest = null;
+    this.buzzLatched = false;
+    this.spanFrom = -1;
+    this.spanWords = 0;
+    this.winMiss = [];
+    this.missRun = 0;
     this.wideEvents = 12;
     return this.snapshot();
   };
@@ -258,9 +293,16 @@
     if (!inw) return this.snapshot();
     this.eventsSeen++;
     this._nudge = false;
+    this._jumped = false;
     this.history.push(inw);
     if (this.history.length > 14) this.history.shift();
-    if (this.checkJump()) return this.snapshot();
+    if (this.checkJump()) {
+      this.lockStep(inw);
+      var js = this.snapshot();
+      this.lastRep = js.wordIdx;
+      this.justJumped = false;
+      return js;
+    }
     var next = new Map();
     var self = this;
     // exponential forgetting: old evidence fades so a stalled hypothesis
@@ -369,6 +411,7 @@
       var best = arr[0][1];
       var second = arr.length > 1 ? arr[1][1].score : -Infinity;
       var gap = best.score - second;
+      this.beamGap = gap;
       if (best.matched >= 4 && gap >= 2.0) {
         this.state = "locked";
         this.lockedCursor = this.cursor;
@@ -381,18 +424,242 @@
         this.state = "searching";
       }
     }
+    this.lockStep(inw);
+    return this.snapshot();
+  };
+
+  // ---- lock layer (v4) ----
+  // Modes: "following" (the beam drives the display), "locked" (the
+  // display advances ONLY sequentially from the anchor; the beam keeps
+  // running silently as a shadow), "diverged" (words stopped fitting
+  // the anchor: display frozen at the last confirmed word, ONE latched
+  // buzz, shadow keeps watching). The lock engages only on
+  // discriminating evidence — a sustained beam lock whose span
+  // contains rare words — never on a refrain alone. Escape from
+  // diverged is governed by escapeMode: "manual" (default — only the
+  // user's own action moves us), "suggest" (a confident shadow is
+  // offered; the user taps to take it), "auto" (a confident shadow
+  // moves us silently).
+  Tracker.prototype.lineStartOf = function (idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= this.words.length) idx = this.words.length - 1;
+    var ln = this.words[idx].line, s = idx;
+    while (s > 0 && this.words[s - 1].line === ln) s--;
+    return s;
+  };
+
+  Tracker.prototype.spanHasRare = function (from, to) {
+    if (!this.freq) {
+      this.freq = {};
+      for (var fi = 0; fi < this.folded.length; fi++) this.freq[this.folded[fi]] = (this.freq[this.folded[fi]] || 0) + 1;
+    }
+    for (var i = Math.max(0, from); i < Math.min(to, this.folded.length); i++) {
+      if ((this.freq[this.folded[i]] || 99) <= 90) return true; // a word used in <5% of positions
+    }
+    return false;
+  };
+
+  Tracker.prototype.engageLock = function (at) {
+    this.mode = "locked";
+    this.anchor = at;
+    this.divCause = null;
+    this.missRun = 0;
+    this.winMiss = [];
+    this.resumeRun = 0;
+    this.stagRun = 0;
+    this.buzzLatched = false;
+    this._suggest = null;
+  };
+
+  Tracker.prototype.lockStep = function (inw) {
+    var beamIdx = this.cursor, k;
+    // shadow bookkeeping: how consistently is the beam tracking?
+    if (this.state === "locked" || this.state === "tentative") {
+      var adv = beamIdx - this.beamRunPos;
+      if (this.beamRunPos >= 0 && adv >= 0 && adv <= 3) this.beamRun++;
+      else if (beamIdx !== this.beamRunPos) this.beamRun = 0;
+    } else if (beamIdx !== this.beamRunPos) {
+      this.beamRun = 0;
+    }
+    this.beamRunPos = beamIdx;
+
+    if (this.mode === "following") {
+      if (this.state === "locked") {
+        if (this.spanFrom < 0) { this.spanFrom = this.prevBeamIdx; this.spanWords = 0; }
+        this.spanWords += Math.max(0, beamIdx - this.prevBeamIdx);
+        var quick = beamIdx <= 15 && this.spanWords >= 5;
+        if ((this.spanWords >= 10 && this.spanHasRare(this.spanFrom, beamIdx)) || quick) {
+          this.engageLock(beamIdx);
+        }
+      } else if (this.spanWords > 0) {
+        // a single flickery feed must not wipe the run — decay instead
+        this.spanWords = Math.max(0, this.spanWords - 2);
+        if (this.spanWords === 0) this.spanFrom = -1;
+      }
+      this.prevBeamIdx = beamIdx;
+      return;
+    }
+
+    if (this.mode === "locked") {
+      // Guarded following: the beam's scoring is the robust matcher
+      // (it absorbs splits, merges and sound-alike substitutions that
+      // a strict word-by-word walk cannot — measured on the real
+      // decode). While locked we follow the beam ONLY through its
+      // sequential movement. A LEAP (the beam's chosen position jumps
+      // 5+ words forward, or 3+ back without landing on a line start)
+      // is a skip/repeat/relocation: refuse it, freeze, buzz once.
+      // A stagnating beam whose recent words fit nowhere near the
+      // anchor is the other divergence: he is saying something else.
+      var delta = beamIdx - this.anchor;
+      var lsCur = this.lineStartOf(this.anchor - 1);
+      var lsPrev = lsCur > 0 ? this.lineStartOf(lsCur - 1) : -1;
+      var restartLanding = Math.abs(beamIdx - (lsCur + 1)) <= 1 || (lsPrev >= 0 && Math.abs(beamIdx - (lsPrev + 1)) <= 1);
+      if (delta >= -2 && delta <= 4) {
+        this.anchor = beamIdx;
+        this.stagRun = 0;
+      } else if (delta < -2 && restartLanding) {
+        this.anchor = beamIdx; // line restart — follow silently
+        this.stagRun = 0;
+      } else if (delta > 4 || delta < -2) {
+        // A beam leap is ambiguous: the beam also leaps when it
+        // REVIVES near the truth after its local hypotheses died of
+        // noise. The words themselves arbitrate: if the last stretch
+        // still substantially fits HERE, it was a revival — follow.
+        // If it fits THERE (>=0.85) and not here, HE moved.
+        // If it fits neither, call it stagnation (healable).
+        var H8 = this.history, n8 = Math.min(8, H8.length), seq8 = H8.slice(-n8);
+        var fitHere = this.seqScore(this.anchor - n8, seq8);
+        var fitThere = this.seqScore(beamIdx - n8, seq8);
+        if (fitHere >= 0.55) {
+          this.anchor = beamIdx;
+          this.stagRun = 0;
+        } else {
+          this.mode = "diverged";
+          this.divCause = fitThere >= 0.85 ? "leap" : "stagnation";
+          this.frozenAnchor = this.anchor;
+          this.resumeRun = 0;
+          if (!this.buzzLatched && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
+          this.prevBeamIdx = beamIdx;
+          return;
+        }
+      }
+      // stagnation: position not advancing and the last 5 heard words
+      // do not fit the text just behind the anchor
+      if (beamIdx <= this.anchor) {
+        var H = this.history;
+        var fit = H.length >= 4 ? this.seqScore(this.anchor - Math.min(5, H.length), H.slice(-5)) : 1;
+        if (fit < 0.5) {
+          this.stagRun = (this.stagRun || 0) + 1;
+          if (this.stagRun >= 5) {
+            this.mode = "diverged";
+            this.divCause = "stagnation"; // the EVIDENCE failed (recognizer burst), not necessarily him
+            this.frozenAnchor = this.anchor;
+            this.resumeRun = 0;
+            if (!this.buzzLatched && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
+          }
+        } else {
+          this.stagRun = 0;
+        }
+      } else {
+        this.stagRun = 0;
+      }
+      this.prevBeamIdx = beamIdx;
+      return;
+    }
+
+    // diverged: display frozen; the beam (shadow) decides recovery.
+    // A STAGNATION divergence heals automatically once the shadow is
+    // clearly tracking again nearby — the recognizer burst passed and
+    // the beam never truly lost him. A LEAP divergence never heals on
+    // its own: he actually went somewhere else, so only a return to
+    // the frozen place, his chosen escape mode, or his own tap moves us.
+    if (this.divCause === "stagnation" && this.beamRun >= 6 &&
+        beamIdx >= this.frozenAnchor - 14 && beamIdx <= this.frozenAnchor + 45 &&
+        (this.state === "locked" || this.state === "tentative")) {
+      this.engageLock(beamIdx);
+      return;
+    }
+    // a local resume is the beam returning near the frozen anchor and
+    // advancing sequentially again (he came back / restarted the line)
+    var nearFrozen = beamIdx >= this.frozenAnchor - 14 && beamIdx <= this.frozenAnchor + 6;
+    var seqDelta = beamIdx - this.prevBeamIdx;
+    this.prevBeamIdx = beamIdx;
+    if (nearFrozen && seqDelta >= 0 && seqDelta <= 3 && (this.state === "locked" || this.state === "tentative")) {
+      this.resumeRun++;
+      if (this.resumeRun >= 3) { this.engageLock(beamIdx); return; }
+    } else {
+      this.resumeRun = 0;
+    }
+    var shadowDist = Math.abs(beamIdx - this.frozenAnchor) > 15 &&
+      (this.state === "locked" || this.state === "tentative");
+    if (shadowDist && this.beamGap >= 2.5 && this.escapeMode === "auto" && this.beamRun >= 12) {
+      this.engageLock(beamIdx);
+      this._jumped = true;
+    } else if (shadowDist && this.beamGap >= 2.5 && this.escapeMode === "suggest" && this.beamRun >= 8) {
+      // one suggestion per episode: the shown target is FROZEN (a
+      // finger may be moving toward it); accepting still lands on the
+      // freshest confident shadow — see acceptSuggestion
+      if (!this._suggest) {
+        this._suggest = {
+          wordIdx: beamIdx,
+          line: this.words[Math.min(beamIdx, this.words.length - 1)].line,
+          streak: this.beamRun
+        };
+      }
+    } else if (this.beamRun < 4) {
+      this._suggest = null;
+    }
+  };
+
+  Tracker.prototype.setEscapeMode = function (m) {
+    if (m === "auto" || m === "suggest" || m === "manual") this.escapeMode = m;
+    return this.snapshot();
+  };
+
+  Tracker.prototype.acceptSuggestion = function () {
+    if (this._suggest) {
+      // land on the freshest confident shadow when there is one (it
+      // kept tracking while the popup stood still); otherwise the
+      // frozen target the user actually saw
+      var at = this._suggest.wordIdx;
+      if (this.beamRun >= 8 && (this.state === "locked" || this.state === "tentative")) at = this.cursor;
+      this._suggest = null;
+      this.beamRunPos = at;
+      this.engageLock(at);
+    }
+    return this.snapshot();
+  };
+
+  // the "I'm somewhere else" action: land on the shadow if it holds a
+  // real track (only meaningful while diverged), else re-open search
+  Tracker.prototype.unlockToShadow = function () {
+    this._suggest = null;
+    this.buzzLatched = false;
+    if (this.mode === "diverged" &&
+        (this.state === "locked" || this.state === "tentative") && this.beamRun >= 6 &&
+        Math.abs(this.cursor - this.anchor) > 4) {
+      this.engageLock(this.cursor);
+    } else {
+      this.mode = "following";
+      this.spanFrom = -1; this.spanWords = 0;
+    }
     return this.snapshot();
   };
 
   Tracker.prototype.snapshot = function () {
-    var idx = Math.max(0, Math.min(this.cursor, this.words.length - 1));
+    var idx = this.mode === "following" ? this.cursor : this.anchor;
+    if (idx < 0) idx = this.cursor;
+    var cidx = Math.max(0, Math.min(idx, this.words.length - 1));
     return {
       state: this.state,
-      wordIdx: this.cursor,
-      line: this.words.length ? this.words[idx].line : 0,
+      mode: this.mode,
+      wordIdx: idx,
+      line: this.words.length ? this.words[cidx].line : 0,
       lockedWordIdx: this.lockedCursor,
       eventsSeen: this.eventsSeen,
-      nudge: this._nudge === true
+      nudge: this._nudge === true,
+      jumped: this._jumped === true,
+      suggest: this._suggest
     };
   };
 
@@ -412,6 +679,16 @@
     this.wasLockedAt = this.eventsSeen;
     this.pausePending = false;
     this.episodeNudged = false;
+    this.lastRep = wordIdx;
+    this.lurchCalm = 99;
+    this.mode = "locked";
+    this.anchor = wordIdx;
+    this.frozenAnchor = wordIdx;
+    this.missRun = 0;
+    this.winMiss = [];
+    this.buzzLatched = false;
+    this._suggest = null;
+    this.beamRunPos = wordIdx;
     this.sinceAdvance = 0;
     return this.snapshot();
   };
