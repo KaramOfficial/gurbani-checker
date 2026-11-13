@@ -82,6 +82,7 @@
     });
     tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
     render();
+    updateUI(false);
   }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
 
   function render(){
