@@ -82,7 +82,24 @@
     this.pendingJump = null;   // {end, at, count}
     this.lastJumpFrom = -1;    // cursor position before the last committed jump
     this.lastJumpAt = -1000000; // eventsSeen at the last committed jump
+    // nudge policy state (v3): while a good lock is fresh, words that fit
+    // a distant place instead of here first earn ONE gentle nudge, and a
+    // jump then needs either a pause before the new passage (pausePending,
+    // set by the page via notePause) or persistent proof (many proposals)
+    this.pausePending = false;
+    this.wasLockedAt = -1000000; // eventsSeen when the tracker last held a lock
+    this.nudgeAt = -1000000;
+    this.episodeNudged = false;
+    this._nudge = false;
   }
+
+  // The page calls this when the reciter paused before the incoming
+  // words (an utterance gap): a passage that starts after a pause is
+  // allowed to move the tracker quickly — it reads as a deliberate
+  // restart from somewhere else, not a mid-flow mistake.
+  Tracker.prototype.notePause = function () {
+    this.pausePending = true;
+  };
 
   // avg sim of heardSeq (folded, length n) against target words [start, start+n)
   Tracker.prototype.seqScore = function (start, heardSeq) {
@@ -140,8 +157,8 @@
       if (H.length < n) continue;
       m = this.distantMatch(n);
       if (!m) continue;
-      if (m.local >= 0.85) { this.pendingJump = null; return false; } // long local fit is good: stay
-      if (m.score >= 0.95 && m.score >= m.local + 0.25) cand = { start: m.start, n: n, strong: true };
+      if (m.local >= 0.85) { this.pendingJump = null; this.episodeNudged = false; return false; } // long local fit is good: stay
+      if (m.score >= 0.95 && m.score >= m.local + 0.25) cand = { start: m.start, n: n, strong: true, local: m.local };
     }
     if (!cand) {
       var shortNs = [6, 5];
@@ -149,7 +166,7 @@
         n = shortNs[si];
         m = this.distantMatch(n);
         if (!m) continue;
-        if (m.local >= 0.8) { this.pendingJump = null; return false; }
+        if (m.local >= 0.8) { this.pendingJump = null; this.episodeNudged = false; return false; }
         // refrain ambiguity: the same words also fit near where we are
         var seq = H.slice(H.length - n), nearBest = 0;
         for (var st = Math.max(0, this.cursor - n - 8); st <= this.cursor - n + 8; st++) {
@@ -158,10 +175,10 @@
         }
         if (nearBest >= 0.85) continue; // explained near here — a twin, not a move
         var need = this.state === "locked" ? 0.95 : 0.9;
-        if (m.score >= need && m.score >= m.local + 0.35) cand = { start: m.start, n: n, strong: false };
+        if (m.score >= need && m.score >= m.local + 0.35) cand = { start: m.start, n: n, strong: false, local: m.local };
       }
     }
-    if (!cand) { this.pendingJump = null; return false; }
+    if (!cand) { this.pendingJump = null; this.episodeNudged = false; return false; }
     var targetEnd = cand.start + cand.n;
     // (4) no cheap ride back to where the last jump came from
     if (!cand.strong && this.lastJumpFrom >= 0 &&
@@ -170,14 +187,34 @@
       this.pendingJump = null;
       return false;
     }
-    // (3) two consecutive proposals, tracking the same moving endpoint
+    // (5) NUDGE + GATED COMMIT (v3, user direction): a held lock is a
+    // commitment. If words arrive that fit a distant place instead of
+    // here, the first strong proposal earns ONE gentle nudge (the page
+    // vibrates / softly beeps — "this isn't the expected sentence") and
+    // the tracker STAYS. The jump itself then needs one of:
+    //   - a pause before this passage (deliberate restart), or
+    //   - persistent proof: the same move proposed again and again
+    //     (he kept reciting the new place — it wasn't a slip).
+    // Without a recent lock there is nothing to protect: 2 proposals,
+    // as before (cold start / right after Listen is pressed again).
+    var protectedRun = this.state === "locked" || (this.eventsSeen - this.wasLockedAt) < 30;
+    var gated = this.pausePending;
+    this.pausePending = false; // the pause is spent on this evaluation
     var p = this.pendingJump;
-    if (p && Math.abs(targetEnd - (p.end + (this.eventsSeen - p.at))) <= 2) {
-      p.count++; p.end = targetEnd; p.at = this.eventsSeen;
-    } else {
+    var isNew = !(p && Math.abs(targetEnd - (p.end + (this.eventsSeen - p.at))) <= 2);
+    if (isNew) {
       this.pendingJump = p = { end: targetEnd, at: this.eventsSeen, count: 1 };
+      if (protectedRun && !gated && cand.local < 0.5 &&
+          !this.episodeNudged && this.eventsSeen - this.nudgeAt >= 15) {
+        this._nudge = true;
+        this.nudgeAt = this.eventsSeen;
+        this.episodeNudged = true;
+      }
+    } else {
+      p.count++; p.end = targetEnd; p.at = this.eventsSeen;
     }
-    if (p.count < 2) return false;
+    var needCount = gated ? 2 : (protectedRun ? 7 : 2);
+    if (p.count < needCount) return false;
     // commit
     var from = this.cursor;
     this.beam = new Map();
@@ -192,6 +229,7 @@
     this.lastJumpFrom = from;
     this.lastJumpAt = this.eventsSeen;
     this.pendingJump = null;
+    this.episodeNudged = false;
     return true;
   };
 
@@ -208,6 +246,9 @@
     this.pendingJump = null;
     this.lastJumpFrom = -1;
     this.lastJumpAt = -1000000;
+    this.pausePending = false;
+    this.wasLockedAt = -1000000;
+    this.episodeNudged = false;
     this.wideEvents = 12;
     return this.snapshot();
   };
@@ -216,6 +257,7 @@
     var inw = foldWord(rawWord);
     if (!inw) return this.snapshot();
     this.eventsSeen++;
+    this._nudge = false;
     this.history.push(inw);
     if (this.history.length > 14) this.history.shift();
     if (this.checkJump()) return this.snapshot();
@@ -330,6 +372,7 @@
       if (best.matched >= 4 && gap >= 2.0) {
         this.state = "locked";
         this.lockedCursor = this.cursor;
+        this.wasLockedAt = this.eventsSeen;
         this.lowConfStreak = 0;
       } else if (best.matched >= 2) {
         this.state = this.state === "locked" && gap < 0.5 ? "lost" : "tentative";
@@ -348,7 +391,8 @@
       wordIdx: this.cursor,
       line: this.words.length ? this.words[idx].line : 0,
       lockedWordIdx: this.lockedCursor,
-      eventsSeen: this.eventsSeen
+      eventsSeen: this.eventsSeen,
+      nudge: this._nudge === true
     };
   };
 
@@ -365,6 +409,9 @@
     this.pendingJump = null;
     this.lastJumpFrom = -1;
     this.lastJumpAt = -1000000;
+    this.wasLockedAt = this.eventsSeen;
+    this.pausePending = false;
+    this.episodeNudged = false;
     this.sinceAdvance = 0;
     return this.snapshot();
   };

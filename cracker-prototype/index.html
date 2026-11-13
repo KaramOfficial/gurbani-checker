@@ -52,7 +52,7 @@
   </div>
 </header>
 <div id="msg"></div>
-<p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). The server CTC engine from the plan swaps in behind this same tracker later.</p>
+<p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). If you say a wrong line, the phone gives a tiny buzz and I stay with you — I only move if you pause and start elsewhere, or keep reciting the new place.</p>
 <main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
 <footer>
   <button id="listenBtn" class="primary">🎙️ Listen</button>
@@ -142,6 +142,41 @@
     }
   }
 
+  // ---------- pause marking + nudge ----------
+  // A gap of >1s between heard words marks a pause to the tracker: a
+  // passage that starts after a pause may move the tracker quickly;
+  // one that starts mid-flow must prove itself. And when the tracker
+  // decides the words don't fit here (snapshot.nudge), the page gives
+  // the tiniest possible signal: a 35 ms buzz, or a barely-there beep
+  // where vibration doesn't exist.
+  var lastFeedAt = 0;
+  function feedTracked(w, timeGap){
+    var now = Date.now();
+    if (timeGap && lastFeedAt && now - lastFeedAt > 1000) tracker.notePause();
+    lastFeedAt = now;
+    return tracker.feed(w);
+  }
+  var beepCtx = null;
+  function softBeep(){
+    try {
+      if (!beepCtx) beepCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (beepCtx.state === 'suspended') beepCtx.resume();
+      var t = beepCtx.currentTime, o = beepCtx.createOscillator(), g = beepCtx.createGain();
+      o.type = 'sine'; o.frequency.value = 720;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.06, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+      o.connect(g); g.connect(beepCtx.destination);
+      o.start(t); o.stop(t + 0.1);
+    } catch(e){}
+  }
+  function doNudge(){
+    if (window.NativeBridge && NativeBridge.nudge) { try { NativeBridge.nudge(); return; } catch(e){} }
+    if (navigator.vibrate) { try { navigator.vibrate(35); return; } catch(e){} }
+    softBeep();
+  }
+  function checkNudge(snap){ if (snap && snap.nudge) doNudge(); }
+
   // ---------- speech recognition (prototype engine) ----------
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function startRecog(){
@@ -162,7 +197,7 @@
         // only the NEW tail of each result so revisions don't double-feed.
         var ws = tr.split(/\s+/);
         var already = fedInterim[i] || 0;
-        if (ws.length > already) ws.slice(already).forEach(function(w){ tracker.feed(w); });
+        if (ws.length > already){ var snap = null; ws.slice(already).forEach(function(w){ snap = feedTracked(w, true); }); checkNudge(snap); }
         if (ev.results[i].isFinal){
           hearing.textContent = "Heard: " + tr;
           delete fedInterim[i];
@@ -258,7 +293,7 @@
   function startHint(){
     var snap = tracker.snapshot();
     var pos = Math.max(0, Math.min(snap.wordIdx, words.length)); // next word he needs
-    var startWord = Math.max(0, pos - 3); // two words before the last word he spoke
+    var startWord = Math.max(0, pos - 1); // just the last word he spoke — one word behind where he stopped
     var curLine = words[Math.max(0, pos - 1)].line;
     var startLine = words[startWord].line;
     hintEndLine = Math.min(curLine + 1, lines.length - 1);
