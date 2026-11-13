@@ -152,7 +152,7 @@
     loadEngine._started = true;
     setEngine("Engine: downloading model (~138 MB, once)…");
     ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
-    ort.env.wasm.wasmPaths = "vendor/";
+    ort.env.wasm.wasmPaths = new URL("vendor/", window.location.href).href;
     fetch(MODEL_URL).then(function(r){ return r.arrayBuffer(); })
       .then(function(buf){ return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] }); })
       .then(function(s){ session = s; engineReady = true; setEngine("Engine: ready — on-device, offline 🟢"); })
