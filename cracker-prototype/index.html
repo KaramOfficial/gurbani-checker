@@ -8,17 +8,17 @@
   :root{--paper:#faf5ea;--ink:#23201a;--gold:#b8862f;--goldsoft:#f0e2c4;--ok:#2e7d46;--warn:#b8862f;--bad:#b03a2e;--card:#fffdf7}
   *{box-sizing:border-box}
   body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif;-webkit-tap-highlight-color:transparent}
-  header{position:sticky;top:0;background:var(--paper);border-bottom:1px solid #e3d7bd;padding:10px 14px;z-index:5}
-  h1{font-size:19px;margin:0 0 2px;font-weight:600}
-  .sub{font-size:12.5px;opacity:.75;margin:0}
-  #status{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
-  .pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid #cbbd97;background:var(--card)}
+  header{position:sticky;top:0;background:var(--paper);border-bottom:1px solid #e3d7bd;padding:8px 12px;z-index:5}
+  h1{font-size:16.5px;margin:0 0 1px;font-weight:600}
+  .sub{font-size:12px;opacity:.75;margin:0}
+  #status{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap}
+  .pill{font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid #cbbd97;background:var(--card)}
   .pill.searching{background:#eee}
   .pill.tentative{background:var(--goldsoft)}
   .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
   .pill.lost{background:#f6dcd8;border-color:var(--bad);color:var(--bad);font-weight:700}
   .pill.diverged{background:#f7e3c3;border-color:#d9a441;color:#8a6414;font-weight:700}
-  #suggestPop{position:fixed;left:50%;transform:translateX(-50%);bottom:96px;z-index:7;background:var(--card);border:1.5px solid var(--gold);border-radius:14px;box-shadow:0 8px 28px rgba(60,45,10,.28);padding:10px 12px;display:flex;gap:10px;align-items:center;max-width:94vw;width:430px}
+  #suggestPop{position:fixed;left:50%;transform:translateX(-50%);bottom:80px;z-index:7;background:var(--card);border:1.5px solid var(--gold);border-radius:14px;box-shadow:0 8px 28px rgba(60,45,10,.28);padding:10px 12px;display:flex;gap:10px;align-items:center;max-width:94vw;width:430px}
   #suggestPop[hidden]{display:none}
   #suggestPop .sg-main{flex:1;min-width:0}
   #suggestPop .sg-title{font-size:12px;opacity:.7}
@@ -27,17 +27,18 @@
   #sgGo{flex:none;width:52px;height:52px;border-radius:50%;background:var(--gold);border-color:var(--gold);color:#fff;font-size:22px;padding:0}
   #sgX{flex:none;width:34px;height:34px;border-radius:50%;font-size:14px;padding:0;opacity:.75}
   #hearing{font-size:12.5px;opacity:.7;min-height:16px;margin-top:6px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  main{padding:10px 14px 120px;max-width:760px;margin:0 auto}
+  main{padding:8px 12px 92px;max-width:760px;margin:0 auto}
   .paudi{font-size:13px;letter-spacing:.12em;color:var(--gold);margin:18px 0 4px;font-weight:700}
   .line{padding:7px 9px;border-radius:8px;font-size:21px;line-height:1.55;cursor:pointer}
   .line .w.done{color:#9a8a63}
   .line.cur{background:var(--goldsoft);box-shadow:inset 3px 0 0 var(--gold)}
   .line.hintline{background:#d9ecd9;box-shadow:inset 3px 0 0 var(--ok)}
-  footer{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid #e3d7bd;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;justify-content:center;z-index:5}
-  button{font-family:inherit;font-size:16px;padding:12px 18px;border-radius:999px;border:1px solid #cbbd97;background:var(--card);color:var(--ink);cursor:pointer}
+  footer{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid #e3d7bd;padding:8px 10px calc(8px + env(safe-area-inset-bottom));display:flex;gap:8px;justify-content:center;z-index:5}
+  button{font-family:inherit;font-size:14.5px;padding:9px 14px;border-radius:12px;border:1px solid #cbbd97;background:var(--card);color:var(--ink);cursor:pointer}
   button.primary{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
   button.on{background:var(--bad);border-color:var(--bad);color:#fff}
   button:disabled{opacity:.45}
+  footer button{flex:1 1 0;min-width:0;padding:10px 4px;font-size:14px;line-height:1.15;border-radius:14px}
   header.nudged{animation:nudgeflash .75s ease}
   @keyframes nudgeflash{0%{box-shadow:inset 0 0 0 3px #e8a33d}100%{box-shadow:inset 0 0 0 0 rgba(232,163,61,0)}}
   #msg{max-width:760px;margin:8px auto 0;padding:0 14px;font-size:13.5px;color:var(--bad)}
@@ -54,22 +55,22 @@
     <span class="pill" id="wordPill">Words heard: 0</span>
   </div>
   <div id="hearing"></div>
-  <div id="speedRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <span style="font-size:12.5px;opacity:.75">Hint speed:</span>
-    <button class="speedBtn" data-speed="1" style="font-size:13px;padding:6px 12px">1×</button>
-    <button class="speedBtn" data-speed="1.5" style="font-size:13px;padding:6px 12px">1.5×</button>
-    <button class="speedBtn" data-speed="1.75" style="font-size:13px;padding:6px 12px">1.75×</button>
-    <button class="speedBtn" data-speed="2" style="font-size:13px;padding:6px 12px">2×</button>
+  <div id="speedRow" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12px;opacity:.75">Hint speed:</span>
+    <button class="speedBtn" data-speed="1" style="font-size:12.5px;padding:4px 10px;border-radius:999px">1×</button>
+    <button class="speedBtn" data-speed="1.5" style="font-size:12.5px;padding:4px 10px;border-radius:999px">1.5×</button>
+    <button class="speedBtn" data-speed="1.75" style="font-size:12.5px;padding:4px 10px;border-radius:999px">1.75×</button>
+    <button class="speedBtn" data-speed="2" style="font-size:12.5px;padding:4px 10px;border-radius:999px">2×</button>
   </div>
-  <div id="escapeRow" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <span style="font-size:12.5px;opacity:.75">When I skip:</span>
-    <button class="escBtn" data-esc="manual" style="font-size:13px;padding:6px 12px">Stay put</button>
-    <button class="escBtn" data-esc="suggest" style="font-size:13px;padding:6px 12px">Suggest</button>
-    <button class="escBtn" data-esc="auto" style="font-size:13px;padding:6px 12px">Auto-move</button>
+  <div id="escapeRow" style="margin-top:5px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12px;opacity:.75">When I skip:</span>
+    <button class="escBtn" data-esc="manual" style="font-size:12.5px;padding:4px 10px;border-radius:999px">Stay put</button>
+    <button class="escBtn" data-esc="suggest" style="font-size:12.5px;padding:4px 10px;border-radius:999px">Suggest</button>
+    <button class="escBtn" data-esc="auto" style="font-size:12.5px;padding:4px 10px;border-radius:999px">Auto-move</button>
   </div>
 </header>
 <div id="msg"></div>
-<p class="note">Tap any line to tell me “I'm here”. Once I've followed you for a bit, I lock on and won't jump around — if you skip or say a wrong line, you get a tiny buzz and I stay. Come back to the line, or tap “I'm somewhere else”. “When I skip” decides the rest: Stay put, Suggest a jump, or Auto-move on very strong evidence. Recognizer: your browser's Punjabi speech recognition (Chrome on Android works best).</p>
+<p class="note">Tap a line to say “I'm here”. Once I lock on, I won't jump — a skip gets a tiny buzz and I stay. “When I skip” picks what happens next.</p>
 <main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
 <div id="suggestPop" hidden>
   <div class="sg-main">
@@ -82,9 +83,8 @@
 </div>
 <footer>
   <button id="listenBtn" class="primary">🎙️ Listen</button>
-  <button id="resyncBtn">📍 I'm somewhere else</button>
+  <button id="resyncBtn">📍 Somewhere else</button>
   <button id="hintBtn" disabled>💡 Take Hint</button>
-  <button id="simBtn">▶️ Demo</button>
 </footer>
 <audio id="refAudio" preload="auto" src="https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3"></audio>
 
@@ -104,14 +104,14 @@
   var words = [];       // {w, line, start, end}
   var lines = [];       // {text, firstWord, lastWord, paudi}
   var tracker = null;
-  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false;
+  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, hintPlaying = false;
   var tappedLine = -1, tappedAtEvents = -1; // last line the user tapped, and the heard-word count at that moment
   var fedInterim = {}; // recognizer result index -> words already fed from its interim transcript
 
   var main = document.getElementById('main'), msg = document.getElementById('msg');
   var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
   var hearing = document.getElementById('hearing'), audio = document.getElementById('refAudio');
-  var listenBtn = document.getElementById('listenBtn'), hintBtn = document.getElementById('hintBtn'), simBtn = document.getElementById('simBtn');
+  var listenBtn = document.getElementById('listenBtn'), hintBtn = document.getElementById('hintBtn');
 
   fetch(DATA_URL).then(function(r){ return r.json(); }).then(function(d){
     var allLines = [];
@@ -155,15 +155,15 @@
     var curWord = Math.min(snap.wordIdx, words.length-1);
     var curLine = words.length ? words[curWord].line : 0;
     lastSnap = snap;
-    if ((listening || simTimer) && snap.mode === 'diverged') {
+    if ((listening) && snap.mode === 'diverged') {
       statePill.className = 'pill diverged';
       statePill.textContent = 'Off-track · staying with you';
-    } else if ((listening || simTimer) && snap.mode === 'locked') {
+    } else if ((listening) && snap.mode === 'locked') {
       statePill.className = 'pill locked';
       statePill.textContent = 'Locked · following you';
     } else {
-      statePill.className = 'pill ' + (listening || simTimer ? snap.state : 'searching');
-      statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
+      statePill.className = 'pill ' + (listening ? snap.state : 'searching');
+      statePill.textContent = (listening) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
     }
     linePill.textContent = 'Line ' + (curLine+1) + ' of ' + lines.length;
     wordPill.textContent = 'Words heard: ' + snap.eventsSeen;
@@ -439,27 +439,7 @@
     if (hintPlaying && hintStopAt !== null && audio.currentTime >= hintStopAt) endHint(false);
   });
 
-  // ---------- demo simulation (no mic): noisy GT stream ----------
-  simBtn.addEventListener('click', function(){
-    if (simTimer){ clearInterval(simTimer); simTimer = null; simBtn.textContent = "▶️ Demo"; updateUI(false); return; }
-    if (!tracker) return;
-    stopListen();
-    tappedLine = -1;
-    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; })); tracker.setEscapeMode(escapeMode);
-    var i = 0, vocab = words.map(function(w){ return w.w; });
-    simBtn.textContent = "⏹ Demo";
-    simTimer = setInterval(function(){
-      if (i >= 220){ clearInterval(simTimer); simTimer = null; simBtn.textContent = "▶️ Demo"; return; }
-      var r = Math.random(), feed = words[i].w, adv = 1;
-      if (r < 0.12) feed = vocab[Math.floor(Math.random()*vocab.length)];
-      else if (r < 0.20) { i++; return; }
-      else if (r < 0.25 && i+1 < words.length) { feed = words[i].w + words[i+1].w; adv = 2; }
-      hearing.textContent = "Demo heard: " + feed;
-      tracker.feed(feed);
-      i += adv;
-      updateUI(true);
-    }, 420);
-  });
+
 })();
 </script>
 </body>
