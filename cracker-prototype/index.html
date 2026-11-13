@@ -55,7 +55,13 @@
 <audio id="refAudio" preload="auto" src="https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3"></audio>
 
 <script>
-  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function(){}); }
+  if ("serviceWorker" in navigator) {
+    var hadController = !!navigator.serviceWorker.controller, reloadedOnce = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if (hadController && !reloadedOnce) { reloadedOnce = true; location.reload(); }
+    });
+    navigator.serviceWorker.register("sw.js").then(function(reg){ if (reg) reg.update(); }).catch(function(){});
+  }
 </script>
 <script src="aligner.js"></script>
 <script>
@@ -132,7 +138,7 @@
   // ---------- speech recognition (prototype engine) ----------
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function startRecog(){
-    if (!SR){ msg.textContent = "This browser has no speech recognition — use Chrome on Android for the live demo. Tap-a-line + Hint still work."; return; }
+    if (!SR){ msg.textContent = "This browser cannot listen (no speech recognition — Safari/Firefox don't offer it). Use Google Chrome (phone or desktop) for listening; tap-a-line + Hint still work here."; return; }
     fedInterim = {}; // a fresh recognition session restarts its result list
     recog = new SR();
     recog.lang = 'pa-IN';
@@ -161,7 +167,18 @@
       }
     };
     recog.onend = function(){ if (listening) { try { recog.start(); } catch(e){} } };
-    recog.onerror = function(e){ if (e.error === 'not-allowed') { msg.textContent = "Microphone permission was denied — allow it in the browser site settings, then tap Listen again."; stopListen(); } };
+    recog.onerror = function(e){
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        msg.textContent = "🎙️ Mic is blocked for this site. Desktop Chrome: click the icon at the left of the address bar → Site settings → Microphone → Allow. On a Mac also check System Settings → Privacy & Security → Microphone → Chrome ON. Then tap Listen again.";
+        stopListen();
+      } else if (e.error === 'audio-capture') {
+        msg.textContent = "🎙️ No microphone found — check the computer's mic/input device, then tap Listen again.";
+        stopListen();
+      } else if (e.error === 'network') {
+        msg.textContent = "🎙️ Chrome's speech service could not be reached — check the internet connection, then tap Listen again.";
+        stopListen();
+      }
+    };
     try { recog.start(); } catch(e){}
   }
   function stopRecog(){ if (recog){ recog.onend = null; try { recog.stop(); } catch(e){} recog = null; } }
