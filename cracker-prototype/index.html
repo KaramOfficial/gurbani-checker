@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cracker — Listen &amp; Hint Prototype (ਅਨੰਦੁ ਸਾਹਿਬ)</title>
+<style>
+  :root{--paper:#faf5ea;--ink:#23201a;--gold:#b8862f;--goldsoft:#f0e2c4;--ok:#2e7d46;--warn:#b8862f;--bad:#b03a2e;--card:#fffdf7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif;-webkit-tap-highlight-color:transparent}
+  header{position:sticky;top:0;background:var(--paper);border-bottom:1px solid #e3d7bd;padding:10px 14px;z-index:5}
+  h1{font-size:19px;margin:0 0 2px;font-weight:600}
+  .sub{font-size:12.5px;opacity:.75;margin:0}
+  #status{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid #cbbd97;background:var(--card)}
+  .pill.searching{background:#eee}
+  .pill.tentative{background:var(--goldsoft)}
+  .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
+  .pill.lost{background:#f6dcd8;border-color:var(--bad);color:var(--bad);font-weight:700}
+  #hearing{font-size:12.5px;opacity:.7;min-height:16px;margin-top:6px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  main{padding:10px 14px 120px;max-width:760px;margin:0 auto}
+  .paudi{font-size:13px;letter-spacing:.12em;color:var(--gold);margin:18px 0 4px;font-weight:700}
+  .line{padding:7px 9px;border-radius:8px;font-size:21px;line-height:1.55;cursor:pointer}
+  .line .w.done{color:#9a8a63}
+  .line.cur{background:var(--goldsoft);box-shadow:inset 3px 0 0 var(--gold)}
+  .line.hintline{background:#d9ecd9;box-shadow:inset 3px 0 0 var(--ok)}
+  footer{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid #e3d7bd;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;justify-content:center;z-index:5}
+  button{font-family:inherit;font-size:16px;padding:12px 18px;border-radius:999px;border:1px solid #cbbd97;background:var(--card);color:var(--ink);cursor:pointer}
+  button.primary{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
+  button.on{background:var(--bad);border-color:var(--bad);color:#fff}
+  button:disabled{opacity:.45}
+  #msg{max-width:760px;margin:8px auto 0;padding:0 14px;font-size:13.5px;color:var(--bad)}
+  .note{max-width:760px;margin:4px auto 0;padding:0 14px;font-size:12.5px;opacity:.7}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎧 Cracker — Listen &amp; Hint <span style="font-size:13px;opacity:.6">prototype</span></h1>
+  <p class="sub">ਅਨੰਦੁ ਸਾਹਿਬ · recite, I follow · stuck? take a hint from Bhagat Ji's Paath</p>
+  <div id="status">
+    <span class="pill searching" id="statePill">Not listening</span>
+    <span class="pill" id="linePill">Line —</span>
+    <span class="pill" id="wordPill">Words heard: 0</span>
+  </div>
+  <div id="hearing"></div>
+</header>
+<div id="msg"></div>
+<p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). The server CTC engine from the plan swaps in behind this same tracker later.</p>
+<main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
+<footer>
+  <button id="listenBtn" class="primary">🎙️ Listen</button>
+  <button id="hintBtn" disabled>💡 Take Hint</button>
+  <button id="simBtn">▶️ Demo</button>
+</footer>
+<audio id="refAudio" preload="auto" src="https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3"></audio>
+
+<script>
+  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function(){}); }
+</script>
+<script src="aligner.js"></script>
+<script>
+(function(){
+  var DATA_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.json";
+  var words = [];       // {w, line, start, end}
+  var lines = [];       // {text, firstWord, lastWord, paudi}
+  var tracker = null;
+  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null;
+
+  var main = document.getElementById('main'), msg = document.getElementById('msg');
+  var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
+  var hearing = document.getElementById('hearing'), audio = document.getElementById('refAudio');
+  var listenBtn = document.getElementById('listenBtn'), hintBtn = document.getElementById('hintBtn'), simBtn = document.getElementById('simBtn');
+
+  fetch(DATA_URL).then(function(r){ return r.json(); }).then(function(d){
+    var allLines = [];
+    d.head_lines.forEach(function(l){ allLines.push({l:l, paudi:0}); });
+    d.paudis.forEach(function(p){ p.lines.forEach(function(l){ allLines.push({l:l, paudi:p.paudi}); }); });
+    allLines.forEach(function(item, li){
+      var first = words.length;
+      item.l.words.forEach(function(w){ words.push({w:w.word, line:li, start:w.start, end:w.end}); });
+      lines.push({text:item.l.text, firstWord:first, lastWord:words.length-1, paudi:item.paudi});
+    });
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    render();
+  }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
+
+  function render(){
+    var html = "", lastPaudi = -1;
+    lines.forEach(function(L, li){
+      if (L.paudi !== lastPaudi){ html += '<div class="paudi">' + (L.paudi===0 ? 'ਆਰੰਭ' : 'ਪਉੜੀ ' + L.paudi) + '</div>'; lastPaudi = L.paudi; }
+      html += '<div class="line" data-line="'+li+'" id="line-'+li+'">';
+      for (var wi = L.firstWord; wi <= L.lastWord; wi++) html += '<span class="w" id="w-'+wi+'">' + escapeHtml(words[wi].w) + '</span> ';
+      html += '</div>';
+    });
+    main.innerHTML = html;
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){
+      el.addEventListener('click', function(){
+        var li = +el.getAttribute('data-line');
+        if (!tracker) return;
+        tracker.setPosition(lines[li].firstWord);
+        updateUI(true);
+      });
+    });
+  }
+  function escapeHtml(s){ return s.replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function updateUI(scroll){
+    if (!tracker) return;
+    var snap = tracker.snapshot();
+    var curWord = Math.min(snap.wordIdx, words.length-1);
+    var curLine = words.length ? words[curWord].line : 0;
+    statePill.className = 'pill ' + (listening || simTimer ? snap.state : 'searching');
+    statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
+    linePill.textContent = 'Line ' + (curLine+1) + ' of ' + lines.length;
+    wordPill.textContent = 'Words heard: ' + snap.eventsSeen;
+    hintBtn.disabled = !(listening || simTimer);
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('cur'); });
+    var el = document.getElementById('line-'+curLine);
+    if (el){ el.classList.add('cur'); if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'}); }
+    for (var wi = 0; wi < words.length; wi++){
+      var wEl = document.getElementById('w-'+wi);
+      if (wEl) wEl.classList.toggle('done', wi < snap.wordIdx);
+    }
+  }
+
+  // ---------- speech recognition (prototype engine) ----------
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function startRecog(){
+    if (!SR){ msg.textContent = "This browser has no speech recognition — use Chrome on Android for the live demo. Tap-a-line + Hint still work."; return; }
+    recog = new SR();
+    recog.lang = 'pa-IN';
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.onresult = function(ev){
+      if (Date.now() < mutedUntil) return;
+      for (var i = ev.resultIndex; i < ev.results.length; i++){
+        var tr = ev.results[i][0].transcript.trim();
+        if (!tr) continue;
+        if (ev.results[i].isFinal){
+          hearing.textContent = "Heard: " + tr;
+          tr.split(/\s+/).forEach(function(w){ tracker.feed(w); });
+          updateUI(true);
+        } else {
+          hearing.textContent = "Listening… " + tr;
+        }
+      }
+    };
+    recog.onend = function(){ if (listening) { try { recog.start(); } catch(e){} } };
+    recog.onerror = function(e){ if (e.error === 'not-allowed') { msg.textContent = "Microphone permission was denied — allow it in the browser site settings, then tap Listen again."; stopListen(); } };
+    try { recog.start(); } catch(e){}
+  }
+  function stopRecog(){ if (recog){ recog.onend = null; try { recog.stop(); } catch(e){} recog = null; } }
+
+  function startListen(){
+    if (!tracker) return;
+    listening = true;
+    listenBtn.textContent = "⏹ Stop"; listenBtn.classList.add('on'); listenBtn.classList.remove('primary');
+    startRecog(); updateUI(false);
+  }
+  function stopListen(){
+    listening = false; stopRecog();
+    listenBtn.textContent = "🎙️ Listen"; listenBtn.classList.remove('on'); listenBtn.classList.add('primary');
+    updateUI(false);
+  }
+  listenBtn.addEventListener('click', function(){ listening ? stopListen() : startListen(); });
+
+  // ---------- hint ----------
+  hintBtn.addEventListener('click', function(){
+    if (!tracker) return;
+    var snap = tracker.snapshot();
+    var stuckWord = Math.min(Math.max(snap.wordIdx - 1, 0), words.length-1);
+    var line = words[stuckWord].line;
+    var startT = Math.max(0, words[stuckWord].start - 0.2);
+    var endLine = Math.min(line + 1, lines.length - 1);
+    hintStopAt = lines[endLine].lastWord !== undefined ? words[lines[endLine].lastWord].end : words[stuckWord].end;
+    // mute the recognizer BEFORE any audio plays (plan v3: keep session, drop input)
+    mutedUntil = Date.now() + 3650000; // muted until hint ends (cleared below)
+    if (recog) { try { recog.stop(); } catch(e){} }
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('hintline'); });
+    for (var li = line; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
+    document.getElementById('line-'+line).scrollIntoView({block:'center', behavior:'smooth'});
+    hearing.textContent = "💡 Bhagat Ji: line " + (line+1) + "…";
+    audio.currentTime = startT;
+    audio.play();
+  });
+  audio.addEventListener('timeupdate', function(){
+    if (hintStopAt !== null && audio.currentTime >= hintStopAt){
+      audio.pause(); hintStopAt = null;
+      // resume: discard the first second (echo tail), expect re-recitation of the stuck line
+      var snap = tracker.snapshot();
+      var line = words[Math.min(Math.max(snap.wordIdx - 1, 0), words.length-1)].line;
+      tracker.setPosition(lines[line].firstWord);
+      mutedUntil = Date.now() + 1000;
+      if (listening) startRecog();
+      setTimeout(function(){ if (Date.now() >= mutedUntil) mutedUntil = 0; }, 1100);
+      updateUI(true);
+    }
+  });
+
+  // ---------- demo simulation (no mic): noisy GT stream ----------
+  simBtn.addEventListener('click', function(){
+    if (simTimer){ clearInterval(simTimer); simTimer = null; simBtn.textContent = "▶️ Demo"; updateUI(false); return; }
+    if (!tracker) return;
+    stopListen();
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    var i = 0, vocab = words.map(function(w){ return w.w; });
+    simBtn.textContent = "⏹ Demo";
+    simTimer = setInterval(function(){
+      if (i >= 220){ clearInterval(simTimer); simTimer = null; simBtn.textContent = "▶️ Demo"; return; }
+      var r = Math.random(), feed = words[i].w, adv = 1;
+      if (r < 0.12) feed = vocab[Math.floor(Math.random()*vocab.length)];
+      else if (r < 0.20) { i++; return; }
+      else if (r < 0.25 && i+1 < words.length) { feed = words[i].w + words[i+1].w; adv = 2; }
+      hearing.textContent = "Demo heard: " + feed;
+      tracker.feed(feed);
+      i += adv;
+      updateUI(true);
+    }, 420);
+  });
+})();
+</script>
+</body>
+</html>
