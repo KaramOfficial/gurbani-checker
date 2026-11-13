@@ -2,7 +2,7 @@
  * data, the hint track, the ONNX Runtime CDN files and the 138 MB model,
  * so after the first visit everything (including recognition) works
  * with no network at all. */
-var CACHE = "cracker-offline-v2";
+var CACHE = "cracker-offline-v3";
 var SHELL = [
   "./",
   "./index.html",

@@ -13,6 +13,13 @@
   .sub{font-size:12.5px;opacity:.75;margin:0}
   #status{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
   .pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid #cbbd97;background:var(--card)}
+  #engineCard{margin-top:8px;border:1px solid #cbbd97;background:var(--card);border-radius:10px;padding:8px 10px;font-size:13px}
+  #engineCard .bar{height:10px;border-radius:99px;background:#e7dcbd;overflow:hidden;margin:6px 0 4px}
+  #engineBarFill{height:100%;width:0%;background:var(--gold);border-radius:99px;transition:width .25s ease}
+  #engineCard.preparing #engineBarFill{animation:pulse 1.1s ease-in-out infinite}
+  #engineCard.ready{border-color:#7da05c;background:#eef4e2}
+  #engineCard.failed{border-color:#c0392b;background:#fbeae7}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
   .pill.searching{background:#eee}
   .pill.tentative{background:var(--goldsoft)}
   .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
@@ -43,6 +50,7 @@
     <span class="pill" id="wordPill">Words heard: 0</span>
     <span class="pill" id="enginePill">Engine: not loaded</span>
   </div>
+  <div id="engineCard"><div id="engineText">🧠 Listening model: not downloaded yet — it loads automatically (one-time, ~480 MB, use Wi-Fi).</div><div class="bar"><div id="engineBarFill"></div></div><div id="engineSub" style="font-size:12px;opacity:.75">After this one download, listening works fully offline.</div></div>
   <div id="hearing"></div>
 </header>
 <div id="msg"></div>
@@ -89,6 +97,7 @@
     tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
     render();
     updateUI(false);
+    loadEngine();
   }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
 
   function render(){
@@ -147,15 +156,73 @@
   var enginePill = document.getElementById('enginePill');
   function setEngine(t){ if (enginePill) enginePill.textContent = t; }
 
+  var engineCard = document.getElementById('engineCard');
+  var engineText = document.getElementById('engineText');
+  var engineSub = document.getElementById('engineSub');
+  var engineBarFill = document.getElementById('engineBarFill');
+  function fmtMB(n){ return (n / 1048576).toFixed(0) + " MB"; }
+  function fetchWithProgress(url, onProgress){
+    return fetch(url).then(function(r){
+      if (!r.ok) throw new Error("download HTTP " + r.status);
+      var total = parseInt(r.headers.get('Content-Length') || "0", 10);
+      if (!r.body || !r.body.getReader) return r.arrayBuffer();
+      var reader = r.body.getReader(), chunks = [], got = 0;
+      function pump(){
+        return reader.read().then(function(res){
+          if (res.done){
+            var buf = new Uint8Array(got), off = 0;
+            chunks.forEach(function(c){ buf.set(c, off); off += c.length; });
+            return buf.buffer;
+          }
+          chunks.push(res.value); got += res.value.length;
+          onProgress(got, total);
+          return pump();
+        });
+      }
+      return pump();
+    });
+  }
   function loadEngine(){
     if (session || loadEngine._started) return;
     loadEngine._started = true;
-    setEngine("Engine: downloading model (~480 MB, once)…");
     ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
     ort.env.wasm.wasmPaths = new URL("vendor/", window.location.href).href;
-    ort.InferenceSession.create(MODEL_URL, { executionProviders: ['wasm'] })
-      .then(function(s){ session = s; engineReady = true; setEngine("Engine: ready — on-device, offline 🟢"); })
-      .catch(function(e){ loadEngine._started = false; setEngine("Engine: load failed — tap Listen to retry"); });
+    engineCard.className = ""; engineCard.style.display = "block";
+    engineText.textContent = "⬇️ Step 1 of 2 · Downloading the listening model (one-time)…";
+    setEngine("Engine: downloading…");
+    fetchWithProgress(MODEL_URL, function(got, total){
+      if (total > 0){
+        var pct = Math.floor(100 * got / total);
+        engineBarFill.style.width = pct + "%";
+        engineText.textContent = "⬇️ Step 1 of 2 · Downloading the listening model… " + pct + "%";
+        engineSub.textContent = fmtMB(got) + " of " + fmtMB(total) + " — keep this page open; Wi-Fi recommended.";
+        setEngine("Engine: downloading " + pct + "%");
+      } else {
+        engineBarFill.style.width = "40%";
+        engineText.textContent = "⬇️ Step 1 of 2 · Downloading the listening model… " + fmtMB(got) + " so far";
+        setEngine("Engine: downloading…");
+      }
+    }).then(function(buf){
+      engineCard.className = "preparing";
+      engineBarFill.style.width = "100%";
+      engineText.textContent = "⚙️ Step 2 of 2 · Download complete — preparing the engine…";
+      engineSub.textContent = "This takes a few seconds.";
+      setEngine("Engine: preparing…");
+      return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
+    }).then(function(s){
+      session = s; engineReady = true;
+      engineCard.className = "ready";
+      engineText.textContent = "✅ Model ready — listening now works fully offline.";
+      engineSub.textContent = "The model is saved on this device; next visits skip the download.";
+      setEngine("Engine: ready — on-device, offline 🟢");
+      if (listening) startDecodeLoop();
+    }).catch(function(e){
+      loadEngine._started = false;
+      engineCard.className = "failed";
+      engineText.textContent = "⚠️ Model download failed — check the connection, then tap 🎙️ Listen to retry.";
+      engineSub.textContent = String(e && e.message || e);
+      setEngine("Engine: load failed — tap Listen to retry");
+    });
   }
 
   function startRecog(){ startMic(); }
