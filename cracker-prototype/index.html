@@ -65,6 +65,8 @@
   var lines = [];       // {text, firstWord, lastWord, paudi}
   var tracker = null;
   var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false, hintLine = 0;
+  var tappedLine = -1, tappedAtEvents = -1; // last line the user tapped, and the heard-word count at that moment
+  var fedInterim = {}; // recognizer result index -> words already fed from its interim transcript
 
   var main = document.getElementById('main'), msg = document.getElementById('msg');
   var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
@@ -99,6 +101,8 @@
         var li = +el.getAttribute('data-line');
         if (!tracker) return;
         tracker.setPosition(lines[li].firstWord);
+        tappedLine = li;
+        tappedAtEvents = tracker.snapshot().eventsSeen;
         updateUI(true);
       });
     });
@@ -129,6 +133,7 @@
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function startRecog(){
     if (!SR){ msg.textContent = "This browser has no speech recognition — use Chrome on Android for the live demo. Tap-a-line + Hint still work."; return; }
+    fedInterim = {}; // a fresh recognition session restarts its result list
     recog = new SR();
     recog.lang = 'pa-IN';
     recog.continuous = true;
@@ -138,13 +143,21 @@
       for (var i = ev.resultIndex; i < ev.results.length; i++){
         var tr = ev.results[i][0].transcript.trim();
         if (!tr) continue;
+        // Feed interim words too, not just finals — finals on Android can
+        // trail the voice by a full line, which made the tracker's position
+        // (and therefore the hint) lag one line behind the reciter. Feed
+        // only the NEW tail of each result so revisions don't double-feed.
+        var ws = tr.split(/\s+/);
+        var already = fedInterim[i] || 0;
+        if (ws.length > already) ws.slice(already).forEach(function(w){ tracker.feed(w); });
         if (ev.results[i].isFinal){
           hearing.textContent = "Heard: " + tr;
-          tr.split(/\s+/).forEach(function(w){ tracker.feed(w); });
-          updateUI(true);
+          delete fedInterim[i];
         } else {
+          fedInterim[i] = ws.length;
           hearing.textContent = "Listening… " + tr;
         }
+        updateUI(true);
       }
     };
     recog.onend = function(){ if (listening) { try { recog.start(); } catch(e){} } };
@@ -191,9 +204,15 @@
   // checker, where clicking anywhere plays from there instantly.
   function startHint(){
     var snap = tracker.snapshot();
-    var curLine = 0;
-    if (snap.wordIdx > 0) curLine = words[Math.min(snap.wordIdx - 1, words.length - 1)].line;
-    hintLine = snap.wordIdx === 0 ? 0 : Math.min(curLine + 1, lines.length - 1);
+    // THE RULE (user-stated, twice): the hint starts from the line AFTER
+    // the currently HIGHLIGHTED line — the highlighted line is the one he
+    // is reading; the hint's job is what comes next. The highlighted line
+    // is the line containing the cursor (next expected word). An earlier
+    // version keyed off the last HEARD word instead, which — whenever the
+    // cursor sits at the highlighted line's start — played the
+    // highlighted line itself.
+    var highlighted = words.length ? words[Math.min(snap.wordIdx, words.length - 1)].line : 0;
+    hintLine = Math.min(highlighted + 1, lines.length - 1);
     var endLine = Math.min(hintLine + 1, lines.length - 1);
     var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.05);
     hintStopAt = words[lines[endLine].lastWord].end + 0.2;
@@ -218,6 +237,7 @@
     Array.prototype.forEach.call(main.querySelectorAll('.hintline'), function(el){ el.classList.remove('hintline'); });
     // expect the user to continue from the first hinted line
     tracker.setPosition(lines[hintLine].firstWord);
+    tappedLine = -1;
     // resume: discard the first second (echo tail), then listen again
     mutedUntil = Date.now() + 1000;
     if (listening) startRecog();
@@ -238,6 +258,7 @@
     if (simTimer){ clearInterval(simTimer); simTimer = null; simBtn.textContent = "▶️ Demo"; updateUI(false); return; }
     if (!tracker) return;
     stopListen();
+    tappedLine = -1;
     tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
     var i = 0, vocab = words.map(function(w){ return w.w; });
     simBtn.textContent = "⏹ Demo";
