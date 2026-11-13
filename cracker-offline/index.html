@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="pa">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cracker OFFLINE — Listen &amp; Hint (ਅਨੰਦੁ ਸਾਹਿਬ)</title>
+<style>
+  :root{--paper:#faf5ea;--ink:#23201a;--gold:#b8862f;--goldsoft:#f0e2c4;--ok:#2e7d46;--warn:#b8862f;--bad:#b03a2e;--card:#fffdf7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:Georgia,'Times New Roman',serif;-webkit-tap-highlight-color:transparent}
+  header{position:sticky;top:0;background:var(--paper);border-bottom:1px solid #e3d7bd;padding:10px 14px;z-index:5}
+  h1{font-size:19px;margin:0 0 2px;font-weight:600}
+  .sub{font-size:12.5px;opacity:.75;margin:0}
+  #status{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid #cbbd97;background:var(--card)}
+  .pill.searching{background:#eee}
+  .pill.tentative{background:var(--goldsoft)}
+  .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
+  .pill.lost{background:#f6dcd8;border-color:var(--bad);color:var(--bad);font-weight:700}
+  #hearing{font-size:12.5px;opacity:.7;min-height:16px;margin-top:6px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  main{padding:10px 14px 120px;max-width:760px;margin:0 auto}
+  .paudi{font-size:13px;letter-spacing:.12em;color:var(--gold);margin:18px 0 4px;font-weight:700}
+  .line{padding:7px 9px;border-radius:8px;font-size:21px;line-height:1.55;cursor:pointer}
+  .line .w.done{color:#9a8a63}
+  .line.cur{background:var(--goldsoft);box-shadow:inset 3px 0 0 var(--gold)}
+  .line.hintline{background:#d9ecd9;box-shadow:inset 3px 0 0 var(--ok)}
+  footer{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid #e3d7bd;padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;gap:10px;justify-content:center;z-index:5}
+  button{font-family:inherit;font-size:16px;padding:12px 18px;border-radius:999px;border:1px solid #cbbd97;background:var(--card);color:var(--ink);cursor:pointer}
+  button.primary{background:var(--gold);border-color:var(--gold);color:#fff;font-weight:700}
+  button.on{background:var(--bad);border-color:var(--bad);color:#fff}
+  button:disabled{opacity:.45}
+  #msg{max-width:760px;margin:8px auto 0;padding:0 14px;font-size:13.5px;color:var(--bad)}
+  .note{max-width:760px;margin:4px auto 0;padding:0 14px;font-size:12.5px;opacity:.7}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎧 Cracker — Listen &amp; Hint <span style="font-size:13px;opacity:.6">offline prototype</span></h1>
+  <p class="sub">ਅਨੰਦੁ ਸਾਹਿਬ · recite, I follow · stuck? take a hint from Bhagat Ji's Paath</p>
+  <div id="status">
+    <span class="pill searching" id="statePill">Not listening</span>
+    <span class="pill" id="linePill">Line —</span>
+    <span class="pill" id="wordPill">Words heard: 0</span>
+    <span class="pill" id="enginePill">Engine: not loaded</span>
+  </div>
+  <div id="hearing"></div>
+</header>
+<div id="msg"></div>
+<p class="note">Tap any line to tell me “I'm here”. This version recognizes your voice ON THE PHONE itself (IndicConformer model trained on Gurbani, ~138 MB, downloaded once) — no audio ever leaves the device. First load needs internet for the model + track; after that it works fully offline.</p>
+<main id="main"><p style="padding:12px">Loading ਅਨੰਦੁ ਸਾਹਿਬ…</p></main>
+<footer>
+  <button id="listenBtn" class="primary">🎙️ Listen</button>
+  <button id="hintBtn" disabled>💡 Take Hint</button>
+  <button id="simBtn">▶️ Offline test</button>
+</footer>
+<audio id="refAudio" preload="auto" src="https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3"></audio>
+
+<script>
+  if ("serviceWorker" in navigator) { navigator.serviceWorker.register("sw.js").catch(function(){}); }
+</script>
+<script src="vendor/ort.wasm.min.js"></script>
+<script src="mel.js"></script>
+<script src="tokens.js"></script>
+<script src="aligner.js"></script>
+<script>
+(function(){
+  var DATA_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.json";
+  var words = [];       // {w, line, start, end}
+  var lines = [];       // {text, firstWord, lastWord, paudi}
+  var tracker = null;
+  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false, hintLine = 0;
+  var tappedLine = -1, tappedAtEvents = -1; // last line the user tapped, and the heard-word count at that moment
+  var fedInterim = {}; // recognizer result index -> words already fed from its interim transcript
+
+  var main = document.getElementById('main'), msg = document.getElementById('msg');
+  var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
+  var hearing = document.getElementById('hearing'), audio = document.getElementById('refAudio');
+  var listenBtn = document.getElementById('listenBtn'), hintBtn = document.getElementById('hintBtn'), simBtn = document.getElementById('simBtn');
+
+  fetch(DATA_URL).then(function(r){ return r.json(); }).then(function(d){
+    var allLines = [];
+    d.head_lines.forEach(function(l){ allLines.push({l:l, paudi:0}); });
+    d.paudis.forEach(function(p){ p.lines.forEach(function(l){ allLines.push({l:l, paudi:p.paudi}); }); });
+    allLines.forEach(function(item, li){
+      var first = words.length;
+      item.l.words.forEach(function(w){ words.push({w:w.word, line:li, start:w.start, end:w.end}); });
+      lines.push({text:item.l.text, firstWord:first, lastWord:words.length-1, paudi:item.paudi});
+    });
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    render();
+    updateUI(false);
+  }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
+
+  function render(){
+    var html = "", lastPaudi = -1;
+    lines.forEach(function(L, li){
+      if (L.paudi !== lastPaudi){ html += '<div class="paudi">' + (L.paudi===0 ? 'ਆਰੰਭ' : 'ਪਉੜੀ ' + L.paudi) + '</div>'; lastPaudi = L.paudi; }
+      html += '<div class="line" data-line="'+li+'" id="line-'+li+'">';
+      for (var wi = L.firstWord; wi <= L.lastWord; wi++) html += '<span class="w" id="w-'+wi+'">' + escapeHtml(words[wi].w) + '</span> ';
+      html += '</div>';
+    });
+    main.innerHTML = html;
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){
+      el.addEventListener('click', function(){
+        var li = +el.getAttribute('data-line');
+        if (!tracker) return;
+        tracker.setPosition(lines[li].firstWord);
+        tappedLine = li;
+        tappedAtEvents = tracker.snapshot().eventsSeen;
+        updateUI(true);
+      });
+    });
+  }
+  function escapeHtml(s){ return s.replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function updateUI(scroll){
+    if (!tracker) return;
+    var snap = tracker.snapshot();
+    var curWord = Math.min(snap.wordIdx, words.length-1);
+    var curLine = words.length ? words[curWord].line : 0;
+    statePill.className = 'pill ' + (listening || testRunning ? snap.state : 'searching');
+    statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
+    linePill.textContent = 'Line ' + (curLine+1) + ' of ' + lines.length;
+    wordPill.textContent = 'Words heard: ' + snap.eventsSeen;
+    hintBtn.disabled = false; // hint works from the last known position, even after Stop
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('cur'); });
+    var el = document.getElementById('line-'+curLine);
+    if (el){ el.classList.add('cur'); if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'}); }
+
+    for (var wi = 0; wi < words.length; wi++){
+      var wEl = document.getElementById('w-'+wi);
+      if (wEl) wEl.classList.toggle('done', wi < snap.wordIdx);
+    }
+  }
+
+  // ---------- on-device engine (fully offline) ----------
+  // IndicConformer CTC (pa-only, int8, ~138 MB) trained on Gurbani —
+  // runs in the browser via ONNX Runtime Web (WASM). Audio never leaves
+  // the phone. Streaming = sliding-window greedy CTC decode every ~1.2 s
+  // over the last seconds of mic audio; finalized words feed the tracker.
+  var MODEL_URL = "https://huggingface.co/surindersinghssj/indicconformer-pa-v3-kirtan/resolve/main/onnx-pa-only/int8/indicconformer-pa-ctc.onnx";
+  var session = null, engineReady = false, engineBusy = false;
+  var micCtx = null, micStream = null, micNode = null;
+  var pcmChunks = [], pcmLen = 0, pcmBase = 0; // pcmBase = absolute sample idx of buffer start
+  var committedEnd = 0; // absolute seconds within this listen session: words fed up to here
+  var decodeTimer = null;
+  var enginePill = document.getElementById('enginePill');
+  function setEngine(t){ if (enginePill) enginePill.textContent = t; }
+
+  function loadEngine(){
+    if (session || loadEngine._started) return;
+    loadEngine._started = true;
+    setEngine("Engine: downloading model (~138 MB, once)…");
+    ort.env.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 2);
+    ort.env.wasm.wasmPaths = "vendor/";
+    fetch(MODEL_URL).then(function(r){ return r.arrayBuffer(); })
+      .then(function(buf){ return ort.InferenceSession.create(buf, { executionProviders: ['wasm'] }); })
+      .then(function(s){ session = s; engineReady = true; setEngine("Engine: ready — on-device, offline 🟢"); })
+      .catch(function(e){ loadEngine._started = false; setEngine("Engine: load failed — tap Listen to retry"); });
+  }
+
+  function startRecog(){ startMic(); }
+  function stopRecog(){
+    stopDecodeLoop();
+    if (micCtx && micCtx.state === 'running') micCtx.suspend();
+  }
+  function startMic(){
+    loadEngine();
+    if (micCtx){ micCtx.resume(); startDecodeLoop(); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      msg.textContent = "This browser cannot open the microphone here (needs HTTPS + Chrome)."; stopListen(); return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }).then(function(stream){
+      micStream = stream;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      micCtx = new AC();
+      var srcNode = micCtx.createMediaStreamSource(stream);
+      micNode = micCtx.createScriptProcessor(4096, 1, 1);
+      pcmChunks = []; pcmLen = 0; pcmBase = 0; committedEnd = 0;
+      var inRate = micCtx.sampleRate;
+      micNode.onaudioprocess = function(ev){
+        var d = ev.inputBuffer.getChannelData(0);
+        var copy;
+        if (inRate === 16000){ copy = new Float32Array(d); }
+        else {
+          var ratio = inRate / 16000, n = Math.floor(d.length / ratio);
+          copy = new Float32Array(n);
+          for (var i = 0; i < n; i++) copy[i] = d[Math.floor(i * ratio)];
+        }
+        pcmChunks.push(copy); pcmLen += copy.length;
+        // keep only the last ~40 s plus what is uncommitted
+        var keepFrom = Math.max(0, (committedEnd - 10) * 16000);
+        while (pcmChunks.length > 1 && pcmBase + pcmChunks[0].length < keepFrom){
+          pcmBase += pcmChunks[0].length; pcmLen -= pcmChunks[0].length; pcmChunks.shift();
+        }
+      };
+      srcNode.connect(micNode); micNode.connect(micCtx.destination);
+      startDecodeLoop();
+    }).catch(function(e){
+      msg.textContent = "Microphone permission was denied — allow it in the browser site settings, then tap Listen again.";
+      stopListen();
+    });
+  }
+  function startDecodeLoop(){ if (!decodeTimer) decodeTimer = setInterval(runDecode, 1200); }
+  function stopDecodeLoop(){ if (decodeTimer){ clearInterval(decodeTimer); decodeTimer = null; } }
+
+  function slicePcm(aSec, bSec){
+    var a = Math.floor(aSec * 16000) - pcmBase, b = Math.floor(bSec * 16000) - pcmBase;
+    var out = new Float32Array(Math.max(0, b - a));
+    var pos = 0, written = 0;
+    for (var ci = 0; ci < pcmChunks.length && written < out.length; ci++){
+      var ch = pcmChunks[ci];
+      var s = Math.max(0, a - pos), e = Math.min(ch.length, b - pos);
+      if (e > s){ out.set(ch.subarray(s, e), written); written += e - s; }
+      pos += ch.length;
+    }
+    return out.subarray(0, written);
+  }
+
+  // greedy CTC decode of one window; returns [{w, start, end}] in absolute seconds
+  async function decodeWindow(samples, startAbs){
+    var f = MelFeaturizer.compute(samples);
+    if (f.frames < 30) return [];
+    var input = new ort.Tensor('float32', f.data, [1, 80, f.frames]);
+    var lenT = new ort.Tensor('int64', BigInt64Array.from([BigInt(f.frames)]), [1]);
+    var out = await session.run({ audio_signal: input, length: lenT });
+    var lp = out.logprobs, dims = lp.dims, data = lp.data;
+    var T = dims[1], V = dims[2], FRAME = 0.04;
+    var words = [], cur = [], curStart = null, prev = -1;
+    for (var t = 0; t < T; t++){
+      var base = t * V, best = 0, bv = -Infinity;
+      for (var v = 0; v < V; v++){ var val = data[base + v]; if (val > bv){ bv = val; best = v; } }
+      if (best === prev) continue;
+      prev = best;
+      if (best === 256) continue;
+      var tok = (window.CTC_TOKENS || [])[best];
+      if (!tok) continue;
+      if (tok.charAt(0) === '▁'){
+        if (cur.length) words.push({ w: cur.join(''), start: curStart, end: startAbs + t * FRAME });
+        cur = [tok.slice(1)]; curStart = startAbs + t * FRAME;
+      } else {
+        if (curStart === null) curStart = startAbs + t * FRAME;
+        cur.push(tok);
+      }
+    }
+    if (cur.length) words.push({ w: cur.join(''), start: curStart, end: startAbs + T * FRAME });
+    return words.filter(function(w){ return w.w; });
+  }
+
+  async function runDecode(){
+    if (!engineReady || engineBusy || !listening) return;
+    if (Date.now() < mutedUntil) return;
+    var nowAbs = (pcmBase + pcmLen) / 16000;
+    if (nowAbs - committedEnd < 1.6) return;
+    var startAbs = Math.max(pcmBase / 16000, committedEnd - 4);
+    engineBusy = true;
+    try {
+      var words = await decodeWindow(slicePcm(startAbs, nowAbs), startAbs);
+      var horizon = ((pcmBase + pcmLen) / 16000) - 1.2;
+      var fed = false;
+      words.forEach(function(w){
+        if (w.end <= horizon && w.end > committedEnd + 0.01){
+          tracker.feed(w.w);
+          committedEnd = Math.max(committedEnd, w.end);
+          fed = true;
+        }
+      });
+      if (fed) updateUI(true);
+    } catch(e){ /* transient: next tick retries */ }
+    engineBusy = false;
+  }
+
+  function startListen(){
+    if (!tracker) return;
+    // restarting after a stop: the user may have moved to a different line —
+    // soften the tracker's memory so it can re-find them anywhere
+    if (tracker.snapshot().eventsSeen > 0) tracker.softReset();
+    listening = true;
+    listenBtn.textContent = "⏹ Stop"; listenBtn.classList.add('on'); listenBtn.classList.remove('primary');
+    startRecog(); updateUI(false);
+  }
+  function stopListen(){
+    if (hintPlaying) endHint(false);
+    listening = false; stopRecog();
+    listenBtn.textContent = "🎙️ Listen"; listenBtn.classList.remove('on'); listenBtn.classList.add('primary');
+    updateUI(false);
+  }
+  listenBtn.addEventListener('click', function(){ listening ? stopListen() : startListen(); });
+
+  // ---------- audio preload (the "other app" mechanism) ----------
+  // Like the checker/tracker: download the WHOLE track once, up front,
+  // and keep it in memory as a blob. From then on, playing from any
+  // timestamp is a local jump — no streaming per click, no seek stalls,
+  // no choppiness. Until the download finishes, the element streams from
+  // the network URL as a fallback.
+  var AUDIO_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3";
+  var audioLocal = false, trackBlob = null;
+  fetch(AUDIO_URL).then(function(r){ return r.blob(); }).then(function(blob){
+    trackBlob = blob;
+    var url = URL.createObjectURL(blob);
+    if (audio.paused && !hintPlaying) audio.src = url;
+    audioLocal = true;
+  }).catch(function(){ /* stay on the streaming URL */ });
+
+  // ---------- hint ----------
+  // Per the user's direction, the hint is what comes NEXT: it plays from
+  // the start of the next line (plus one more line of runway), using the
+  // loaded track + the word timestamps — the same mechanism as the
+  // checker, where clicking anywhere plays from there instantly.
+  function startHint(){
+    var snap = tracker.snapshot();
+    // THE RULE (user-stated, twice): the hint starts from the line AFTER
+    // the currently HIGHLIGHTED line — the highlighted line is the one he
+    // is reading; the hint's job is what comes next. The highlighted line
+    // is the line containing the cursor (next expected word). An earlier
+    // version keyed off the last HEARD word instead, which — whenever the
+    // cursor sits at the highlighted line's start — played the
+    // highlighted line itself.
+    var highlighted = words.length ? words[Math.min(snap.wordIdx, words.length - 1)].line : 0;
+    hintLine = Math.min(highlighted + 1, lines.length - 1);
+    var endLine = Math.min(hintLine + 1, lines.length - 1);
+    var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.05);
+    hintStopAt = words[lines[endLine].lastWord].end + 0.2;
+    // fully close the recognizer BEFORE any audio plays (onend detached, so
+    // it cannot auto-restart and hear the hint through the speaker)
+    stopRecog();
+    mutedUntil = Date.now() + 3650000; // muted until the hint ends (set in endHint)
+    Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('hintline'); });
+    for (var li = hintLine; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
+    document.getElementById('line-'+hintLine).scrollIntoView({block:'center', behavior:'smooth'});
+    hearing.textContent = "💡 Bhagat Ji: next line " + (hintLine+1) + "…";
+    hintPlaying = true;
+    hintBtn.textContent = "⏹ Stop Hint";
+    audio.currentTime = startT;
+    audio.play().catch(function(){});
+  }
+  function endHint(manual){
+    audio.pause();
+    hintStopAt = null;
+    hintPlaying = false;
+    hintBtn.textContent = "💡 Take Hint";
+    Array.prototype.forEach.call(main.querySelectorAll('.hintline'), function(el){ el.classList.remove('hintline'); });
+    // expect the user to continue from the first hinted line
+    tracker.setPosition(lines[hintLine].firstWord);
+    tappedLine = -1;
+    // resume: discard the first second (echo tail), then listen again
+    mutedUntil = Date.now() + 1000;
+    if (listening) startRecog();
+    setTimeout(function(){ if (Date.now() >= mutedUntil) mutedUntil = 0; }, 1100);
+    hearing.textContent = manual ? "Hint stopped." : "Hint done — keep going, I'm listening.";
+    updateUI(true);
+  }
+  hintBtn.addEventListener('click', function(){
+    if (!tracker) return;
+    if (hintPlaying) endHint(true); else startHint();
+  });
+  audio.addEventListener('timeupdate', function(){
+    if (hintPlaying && hintStopAt !== null && audio.currentTime >= hintStopAt) endHint(false);
+  });
+
+  // ---------- offline self-test: run Bhagat Ji's own track through the
+  // on-device engine (no mic) and watch it track — also a speed benchmark --
+  var testRunning = false, testCancel = false;
+  simBtn.addEventListener('click', async function(){
+    if (testRunning){ testCancel = true; return; }
+    if (!tracker) return;
+    stopListen();
+    tappedLine = -1;
+    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; }));
+    updateUI(false);
+    if (!trackBlob){ hearing.textContent = "Test needs the track — still downloading, try again in a few seconds."; return; }
+    loadEngine();
+    if (!engineReady){ hearing.textContent = "Loading the on-device engine first… tap Offline test again when the pill says ready."; return; }
+    testRunning = true; testCancel = false;
+    simBtn.textContent = "⏹ Test";
+    try {
+      var ac = new (window.AudioContext || window.webkitAudioContext)();
+      var decoded = await ac.decodeAudioData(await trackBlob.arrayBuffer());
+      var ch0 = decoded.getChannelData(0), srcRate = decoded.sampleRate;
+      var total = Math.min(120, Math.floor(decoded.duration));
+      var t0 = performance.now(), fedWords = 0;
+      for (var s = 0; s < total && !testCancel; s += 12){
+        var n = Math.floor(12 * srcRate), seg = ch0.subarray(s * srcRate, Math.min(ch0.length, (s + 12) * srcRate));
+        var samples;
+        if (srcRate === 16000) samples = seg;
+        else {
+          var ratio = srcRate / 16000, m = Math.floor(seg.length / ratio);
+          samples = new Float32Array(m);
+          for (var i = 0; i < m; i++) samples[i] = seg[Math.floor(i * ratio)];
+        }
+        var ws = await decodeWindow(samples, s);
+        ws.forEach(function(w){ tracker.feed(w.w); fedWords++; });
+        var el = ((performance.now() - t0) / 1000).toFixed(1);
+        hearing.textContent = "Offline test: decoded " + Math.min(total, s + 12) + "s of Paath in " + el + "s · " + fedWords + " words fed";
+        updateUI(true);
+        await new Promise(function(r){ setTimeout(r, 10); });
+      }
+      var el2 = ((performance.now() - t0) / 1000);
+      hearing.textContent = "Offline test done: " + total + "s of audio processed in " + el2.toFixed(1) + "s (" + (el2 / total).toFixed(2) + "× realtime on this device).";
+    } catch(e){
+      hearing.textContent = "Offline test failed: " + e.message;
+    }
+    testRunning = false;
+    simBtn.textContent = "▶️ Offline test";
+  });
+})();
+</script>
+</body>
+</html>
