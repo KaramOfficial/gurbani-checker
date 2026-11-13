@@ -118,6 +118,7 @@
     Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('cur'); });
     var el = document.getElementById('line-'+curLine);
     if (el){ el.classList.add('cur'); if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'}); }
+
     for (var wi = 0; wi < words.length; wi++){
       var wEl = document.getElementById('w-'+wi);
       if (wEl) wEl.classList.toggle('done', wi < snap.wordIdx);
@@ -169,15 +170,33 @@
   }
   listenBtn.addEventListener('click', function(){ listening ? stopListen() : startListen(); });
 
+  // ---------- audio preload (the "other app" mechanism) ----------
+  // Like the checker/tracker: download the WHOLE track once, up front,
+  // and keep it in memory as a blob. From then on, playing from any
+  // timestamp is a local jump — no streaming per click, no seek stalls,
+  // no choppiness. Until the download finishes, the element streams from
+  // the network URL as a fallback.
+  var AUDIO_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3";
+  var audioLocal = false;
+  fetch(AUDIO_URL).then(function(r){ return r.blob(); }).then(function(blob){
+    var url = URL.createObjectURL(blob);
+    if (audio.paused && !hintPlaying) audio.src = url;
+    audioLocal = true;
+  }).catch(function(){ /* stay on the streaming URL */ });
+
   // ---------- hint ----------
+  // Per the user's direction, the hint is what comes NEXT: it plays from
+  // the start of the next line (plus one more line of runway), using the
+  // loaded track + the word timestamps — the same mechanism as the
+  // checker, where clicking anywhere plays from there instantly.
   function startHint(){
     var snap = tracker.snapshot();
-    var stuckWord = Math.min(Math.max(snap.wordIdx - 1, 0), words.length-1);
-    hintLine = words[stuckWord].line;
+    var curLine = 0;
+    if (snap.wordIdx > 0) curLine = words[Math.min(snap.wordIdx - 1, words.length - 1)].line;
+    hintLine = snap.wordIdx === 0 ? 0 : Math.min(curLine + 1, lines.length - 1);
     var endLine = Math.min(hintLine + 1, lines.length - 1);
-    // pad both ends a little so no word is clipped at the cut points
-    var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.3);
-    hintStopAt = words[lines[endLine].lastWord].end + 0.3;
+    var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.05);
+    hintStopAt = words[lines[endLine].lastWord].end + 0.2;
     // fully close the recognizer BEFORE any audio plays (onend detached, so
     // it cannot auto-restart and hear the hint through the speaker)
     stopRecog();
@@ -185,16 +204,11 @@
     Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('hintline'); });
     for (var li = hintLine; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
     document.getElementById('line-'+hintLine).scrollIntoView({block:'center', behavior:'smooth'});
-    hearing.textContent = "💡 Bhagat Ji: line " + (hintLine+1) + "…";
+    hearing.textContent = "💡 Bhagat Ji: next line " + (hintLine+1) + "…";
     hintPlaying = true;
     hintBtn.textContent = "⏹ Stop Hint";
-    // seek FIRST, play only once the seek has actually landed — playing
-    // before the seek completes is what made the audio sound chopped
-    var played = false;
-    function playNow(){ if (played) return; played = true; audio.removeEventListener('seeked', playNow); audio.play().catch(function(){}); }
-    audio.addEventListener('seeked', playNow);
     audio.currentTime = startT;
-    setTimeout(playNow, 500); // fallback if no seek was needed
+    audio.play().catch(function(){});
   }
   function endHint(manual){
     audio.pause();
@@ -202,7 +216,7 @@
     hintPlaying = false;
     hintBtn.textContent = "💡 Take Hint";
     Array.prototype.forEach.call(main.querySelectorAll('.hintline'), function(el){ el.classList.remove('hintline'); });
-    // expect the user to re-recite from the start of the hinted line
+    // expect the user to continue from the first hinted line
     tracker.setPosition(lines[hintLine].firstWord);
     // resume: discard the first second (echo tail), then listen again
     mutedUntil = Date.now() + 1000;
