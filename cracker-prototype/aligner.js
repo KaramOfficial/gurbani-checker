@@ -75,6 +75,13 @@
     }
     this.history = [];   // last folded heard words, oldest first
     this.wideEvents = 0; this.jumpCooldown = 0; // after softReset: unrestricted re-acquisition window
+    // jump-stability state: a distant jump must be proposed twice in a
+    // row before it commits, and jumping BACK toward where we just came
+    // from faces a higher bar for a while — together these stop the
+    // first-line/last-line refrain twins from ping-ponging the cursor
+    this.pendingJump = null;   // {end, at, count}
+    this.lastJumpFrom = -1;    // cursor position before the last committed jump
+    this.lastJumpAt = -1000000; // eventsSeen at the last committed jump
   }
 
   // avg sim of heardSeq (folded, length n) against target words [start, start+n)
@@ -87,45 +94,105 @@
     return total / n;
   };
 
-  // Jump detection: if the last n heard words match a DISTANT place much
-  // better than where the cursor currently sits, snap there. This is what
-  // lets the tracker pick the reciter up from any line after they move.
+  // Best DISTANT sequence match for the last n heard words, plus how well
+  // those same words fit exactly where the cursor already expects them.
+  Tracker.prototype.distantMatch = function (n) {
+    var H = this.history;
+    if (H.length < n) return null;
+    var seq = H.slice(H.length - n);
+    var lastWord = seq[n - 1];
+    var ends = this.posIndex[lastWord] || [];
+    var bestStart = -1, bestScore = 0;
+    for (var ei = 0; ei < ends.length; ei++) {
+      var start = ends[ei] - (n - 1);
+      if (start < 0) continue;
+      if (Math.abs(start + n - this.cursor) <= 15) continue; // not distant
+      var sc = this.seqScore(start, seq);
+      if (sc > bestScore) { bestScore = sc; bestStart = start; }
+    }
+    if (bestStart < 0) return null;
+    return { start: bestStart, score: bestScore, local: this.seqScore(this.cursor - n, seq) };
+  };
+
+  // Jump detection, stay-first. Anand Sahib's pauris open and close with
+  // near-identical lines, so a short heard sequence often matches a
+  // distant refrain twin almost perfectly while a word or two of
+  // recognition noise dents the local fit — the old rule snapped on that
+  // and then snapped back, and the screen jumped. Now:
+  //  (1) LONG context is tried first (last 8-10 words = the tail of the
+  //      previous sentence, which the twins do NOT share);
+  //  (2) a short-window jump is vetoed when the same words also fit well
+  //      somewhere near the current position (refrain ambiguity);
+  //  (3) any jump must be proposed on two consecutive events before it
+  //      commits — one noisy burst can no longer teleport the cursor;
+  //  (4) after a jump, jumping BACK toward the pre-jump position needs
+  //      the long-context proof for the next 40 events.
+  // A genuine relocation still re-acquires: it matches long, matches
+  // twice, and its local fit stays poor — it just takes ~1 extra word.
   Tracker.prototype.checkJump = function () {
     if (this.jumpCooldown > 0) { this.jumpCooldown--; return false; }
     var H = this.history;
-    for (var n = Math.min(6, H.length); n >= 5; n--) {
-      var seq = H.slice(H.length - n);
-      var localScore = this.seqScore(this.cursor - n, seq);
-      if (localScore >= 0.8) return false; // local explanation is good; stay
-      var lastWord = seq[n - 1];
-      var ends = this.posIndex[lastWord] || [];
-      var bestStart = -1, bestScore = 0;
-      for (var ei = 0; ei < ends.length; ei++) {
-        var start = ends[ei] - (n - 1);
-        if (start < 0) continue;
-        if (Math.abs(start + n - this.cursor) <= 15) continue; // not distant
-        var sc = this.seqScore(start, seq);
-        if (sc > bestScore) { bestScore = sc; bestStart = start; }
-      }
-      // Strict firing rule (a loose one measurably hurt normal tracking:
-      // random noisy 4-grams can coincidentally match a distant passage).
-      // A real jump must match almost exactly AND clearly beat the local fit.
-      var need = this.state === "locked" ? 0.95 : 0.9;
-      if (bestStart >= 0 && bestScore >= need && bestScore >= localScore + 0.25) {
-        var newCursor = bestStart + n;
-        this.beam = new Map();
-        this.beam.set(newCursor, { score: 4, matched: n + 2 });
-        this.cursor = newCursor;
-        this.lastCursor = newCursor;
-        this.anchorIdx = newCursor;
-        this.anchorEvents = this.eventsSeen;
-        this.sinceAdvance = 0;
-        this.state = "tentative";
-        this.jumpCooldown = 10; // no second jump for a while — prevents thrash
-        return true;
+    if (H.length < 5) return false;
+    var cand = null, li, si, n, m;
+    var longNs = [10, 9, 8];
+    for (li = 0; li < longNs.length && !cand; li++) {
+      n = longNs[li];
+      if (H.length < n) continue;
+      m = this.distantMatch(n);
+      if (!m) continue;
+      if (m.local >= 0.85) { this.pendingJump = null; return false; } // long local fit is good: stay
+      if (m.score >= 0.95 && m.score >= m.local + 0.25) cand = { start: m.start, n: n, strong: true };
+    }
+    if (!cand) {
+      var shortNs = [6, 5];
+      for (si = 0; si < shortNs.length && !cand; si++) {
+        n = shortNs[si];
+        m = this.distantMatch(n);
+        if (!m) continue;
+        if (m.local >= 0.8) { this.pendingJump = null; return false; }
+        // refrain ambiguity: the same words also fit near where we are
+        var seq = H.slice(H.length - n), nearBest = 0;
+        for (var st = Math.max(0, this.cursor - n - 8); st <= this.cursor - n + 8; st++) {
+          var nsc = this.seqScore(st, seq);
+          if (nsc > nearBest) nearBest = nsc;
+        }
+        if (nearBest >= 0.85) continue; // explained near here — a twin, not a move
+        var need = this.state === "locked" ? 0.95 : 0.9;
+        if (m.score >= need && m.score >= m.local + 0.35) cand = { start: m.start, n: n, strong: false };
       }
     }
-    return false;
+    if (!cand) { this.pendingJump = null; return false; }
+    var targetEnd = cand.start + cand.n;
+    // (4) no cheap ride back to where the last jump came from
+    if (!cand.strong && this.lastJumpFrom >= 0 &&
+        this.eventsSeen - this.lastJumpAt < 40 &&
+        Math.abs(targetEnd - this.lastJumpFrom) <= 25) {
+      this.pendingJump = null;
+      return false;
+    }
+    // (3) two consecutive proposals, tracking the same moving endpoint
+    var p = this.pendingJump;
+    if (p && Math.abs(targetEnd - (p.end + (this.eventsSeen - p.at))) <= 2) {
+      p.count++; p.end = targetEnd; p.at = this.eventsSeen;
+    } else {
+      this.pendingJump = p = { end: targetEnd, at: this.eventsSeen, count: 1 };
+    }
+    if (p.count < 2) return false;
+    // commit
+    var from = this.cursor;
+    this.beam = new Map();
+    this.beam.set(targetEnd, { score: 4, matched: cand.n + 2 });
+    this.cursor = targetEnd;
+    this.lastCursor = targetEnd;
+    this.anchorIdx = targetEnd;
+    this.anchorEvents = this.eventsSeen;
+    this.sinceAdvance = 0;
+    this.state = "tentative";
+    this.jumpCooldown = 30; // no second jump for a while — prevents thrash
+    this.lastJumpFrom = from;
+    this.lastJumpAt = this.eventsSeen;
+    this.pendingJump = null;
+    return true;
   };
 
   // After Stop/Start or a long stall: forget banked evidence but remember
@@ -138,6 +205,9 @@
     this.lowConfStreak = 0;
     this.sinceAdvance = 0;
     this.history = [];
+    this.pendingJump = null;
+    this.lastJumpFrom = -1;
+    this.lastJumpAt = -1000000;
     this.wideEvents = 12;
     return this.snapshot();
   };
@@ -147,7 +217,7 @@
     if (!inw) return this.snapshot();
     this.eventsSeen++;
     this.history.push(inw);
-    if (this.history.length > 8) this.history.shift();
+    if (this.history.length > 14) this.history.shift();
     if (this.checkJump()) return this.snapshot();
     var next = new Map();
     var self = this;
@@ -238,7 +308,22 @@
     }
     this.beam = new Map(kept);
     if (arr.length) {
-      this.cursor = arr[0][0];
+      // Sticky cursor (display hysteresis): when a refrain twin runs
+      // neck-and-neck with the true position through an identical
+      // stretch, the reported cursor stays with the incumbent unless the
+      // challenger beats every near-incumbent hypothesis by a clear
+      // margin (2.5 ≈ more than a word of evidence). The beam itself is
+      // untouched — only which hypothesis is surfaced. When the lines
+      // diverge, the true path outscores the stalled twin within a word
+      // or two and the cursor follows.
+      var chosen = arr[0];
+      for (var ci = 0; ci < arr.length; ci++) {
+        if (Math.abs(arr[ci][0] - this.cursor) <= 4) {
+          if (arr[0][1].score - arr[ci][1].score <= 2.5) chosen = arr[ci];
+          break;
+        }
+      }
+      this.cursor = chosen[0];
       var best = arr[0][1];
       var second = arr.length > 1 ? arr[1][1].score : -Infinity;
       var gap = best.score - second;
@@ -277,6 +362,9 @@
     this.anchorIdx = wordIdx;
     this.anchorEvents = this.eventsSeen;
     this.lastCursor = wordIdx;
+    this.pendingJump = null;
+    this.lastJumpFrom = -1;
+    this.lastJumpAt = -1000000;
     this.sinceAdvance = 0;
     return this.snapshot();
   };
