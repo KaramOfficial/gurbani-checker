@@ -43,6 +43,13 @@
     <span class="pill" id="wordPill">Words heard: 0</span>
   </div>
   <div id="hearing"></div>
+  <div id="speedRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12.5px;opacity:.75">Hint speed:</span>
+    <button class="speedBtn" data-speed="1" style="font-size:13px;padding:6px 12px">1×</button>
+    <button class="speedBtn" data-speed="1.5" style="font-size:13px;padding:6px 12px">1.5×</button>
+    <button class="speedBtn" data-speed="1.75" style="font-size:13px;padding:6px 12px">1.75×</button>
+    <button class="speedBtn" data-speed="2" style="font-size:13px;padding:6px 12px">2×</button>
+  </div>
 </header>
 <div id="msg"></div>
 <p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). The server CTC engine from the plan swaps in behind this same tracker later.</p>
@@ -214,6 +221,28 @@
     audioLocal = true;
   }).catch(function(){ /* stay on the streaming URL */ });
 
+  // ---------- hint speed ----------
+  // Bhagat Ji's Paath is unhurried; a fluent reciter who is only stuck
+  // on a word often wants the hint brisk. Pitch stays natural (the
+  // browser's playbackRate preserves it); the choice persists.
+  var hintSpeed = 1;
+  try { hintSpeed = parseFloat(localStorage.getItem('cracker-speed')) || 1; } catch(e){}
+  function paintSpeed(){
+    Array.prototype.forEach.call(document.querySelectorAll('.speedBtn'), function(b){
+      var on = parseFloat(b.getAttribute('data-speed')) === hintSpeed;
+      b.style.background = on ? 'var(--gold)' : 'var(--card)';
+      b.style.color = on ? '#fff' : 'var(--ink)';
+    });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.speedBtn'), function(b){
+    b.addEventListener('click', function(){
+      hintSpeed = parseFloat(b.getAttribute('data-speed')) || 1;
+      try { localStorage.setItem('cracker-speed', String(hintSpeed)); } catch(e){}
+      paintSpeed();
+    });
+  });
+  paintSpeed();
+
   // ---------- hint ----------
   // WORD-ANCHORED HINT (user direction 2026-11-13, replaces the
   // Smart/Next-line/Same-line modes, which never matched how he actually
@@ -246,6 +275,7 @@
     hearing.textContent = "💡 Bhagat Ji, from “" + preview + " …”";
     hintPlaying = true;
     hintBtn.textContent = "⏹ Stop Hint";
+    audio.playbackRate = hintSpeed;
     audio.currentTime = startT;
     audio.play().catch(function(){});
   }
