@@ -65,12 +65,90 @@
     this.lowConfStreak = 0;
     this.sinceAdvance = 0;
     this.lastCursor = 0;
+    // sequence-anchor machinery: folded word -> all its positions, and a
+    // rolling history of heard words, so a reciter who jumps to a totally
+    // different part of the text is re-found from the word SEQUENCE alone
+    this.posIndex = {};
+    for (var pi = 0; pi < this.folded.length; pi++) {
+      var fw = this.folded[pi];
+      if (fw) { (this.posIndex[fw] = this.posIndex[fw] || []).push(pi); }
+    }
+    this.history = [];   // last folded heard words, oldest first
+    this.wideEvents = 0; this.jumpCooldown = 0; // after softReset: unrestricted re-acquisition window
   }
+
+  // avg sim of heardSeq (folded, length n) against target words [start, start+n)
+  Tracker.prototype.seqScore = function (start, heardSeq) {
+    var n = heardSeq.length, total = 0;
+    for (var i = 0; i < n; i++) {
+      if (start + i < 0 || start + i >= this.folded.length) return 0;
+      total += sim(heardSeq[i], this.folded[start + i]);
+    }
+    return total / n;
+  };
+
+  // Jump detection: if the last n heard words match a DISTANT place much
+  // better than where the cursor currently sits, snap there. This is what
+  // lets the tracker pick the reciter up from any line after they move.
+  Tracker.prototype.checkJump = function () {
+    if (this.jumpCooldown > 0) { this.jumpCooldown--; return false; }
+    var H = this.history;
+    for (var n = Math.min(6, H.length); n >= 5; n--) {
+      var seq = H.slice(H.length - n);
+      var localScore = this.seqScore(this.cursor - n, seq);
+      if (localScore >= 0.8) return false; // local explanation is good; stay
+      var lastWord = seq[n - 1];
+      var ends = this.posIndex[lastWord] || [];
+      var bestStart = -1, bestScore = 0;
+      for (var ei = 0; ei < ends.length; ei++) {
+        var start = ends[ei] - (n - 1);
+        if (start < 0) continue;
+        if (Math.abs(start + n - this.cursor) <= 15) continue; // not distant
+        var sc = this.seqScore(start, seq);
+        if (sc > bestScore) { bestScore = sc; bestStart = start; }
+      }
+      // Strict firing rule (a loose one measurably hurt normal tracking:
+      // random noisy 4-grams can coincidentally match a distant passage).
+      // A real jump must match almost exactly AND clearly beat the local fit.
+      var need = this.state === "locked" ? 0.95 : 0.9;
+      if (bestStart >= 0 && bestScore >= need && bestScore >= localScore + 0.25) {
+        var newCursor = bestStart + n;
+        this.beam = new Map();
+        this.beam.set(newCursor, { score: 4, matched: n + 2 });
+        this.cursor = newCursor;
+        this.lastCursor = newCursor;
+        this.anchorIdx = newCursor;
+        this.anchorEvents = this.eventsSeen;
+        this.sinceAdvance = 0;
+        this.state = "tentative";
+        this.jumpCooldown = 10; // no second jump for a while — prevents thrash
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // After Stop/Start or a long stall: forget banked evidence but remember
+  // roughly where we were; open a short unrestricted re-acquisition window
+  Tracker.prototype.softReset = function () {
+    var at = this.cursor;
+    this.beam = new Map();
+    this.beam.set(at, { score: 0, matched: 0 });
+    this.state = "searching";
+    this.lowConfStreak = 0;
+    this.sinceAdvance = 0;
+    this.history = [];
+    this.wideEvents = 12;
+    return this.snapshot();
+  };
 
   Tracker.prototype.feed = function (rawWord) {
     var inw = foldWord(rawWord);
     if (!inw) return this.snapshot();
     this.eventsSeen++;
+    this.history.push(inw);
+    if (this.history.length > 8) this.history.shift();
+    if (this.checkJump()) return this.snapshot();
     var next = new Map();
     var self = this;
     // exponential forgetting: old evidence fades so a stalled hypothesis
@@ -113,11 +191,15 @@
     var bestIdx = arr.length ? arr[0][0] : 0;
     if (bestIdx > this.lastCursor) { this.sinceAdvance = 0; this.lastCursor = bestIdx; }
     else this.sinceAdvance++;
-    if (arr.length && (arr[0][1].score < 1.0 || this.sinceAdvance >= 6)) {
+    var wide = this.wideEvents > 0;
+    if (wide) this.wideEvents--;
+    if (arr.length && (wide || arr[0][1].score < 1.0 || this.sinceAdvance >= 6)) {
       // Re-acquisition is restricted: near the current position, OR on a
       // rare word (<=3 occurrences in the whole text) which is a safe
       // global anchor. Common repeated words may NOT teleport the cursor —
-      // that is exactly how repeated refrains trap the tracker.
+      // that is exactly how repeated refrains trap the tracker. During the
+      // short window after a softReset (user pressed Listen again), the
+      // restriction lifts: the user may have moved anywhere on purpose.
       if (!this.freq) {
         this.freq = {};
         for (var fi = 0; fi < this.folded.length; fi++) this.freq[this.folded[fi]] = (this.freq[this.folded[fi]] || 0) + 1;
@@ -126,7 +208,7 @@
       for (var k = 0; k < this.words.length; k++) {
         var near = Math.abs(k - anchor) <= 40;
         var rare = (this.freq[this.folded[k]] || 99) <= 3;
-        if (!near && !rare) continue;
+        if (!wide && !near && !rare) continue;
         var sg = sim(inw, this.folded[k]);
         if (sg >= 0.8) {
           var cur2 = next.get(k + 1);

@@ -64,7 +64,7 @@
   var words = [];       // {w, line, start, end}
   var lines = [];       // {text, firstWord, lastWord, paudi}
   var tracker = null;
-  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null;
+  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false, hintLine = 0;
 
   var main = document.getElementById('main'), msg = document.getElementById('msg');
   var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
@@ -113,7 +113,7 @@
     statePill.textContent = (listening || simTimer) ? (snap.state[0].toUpperCase()+snap.state.slice(1)) : 'Not listening';
     linePill.textContent = 'Line ' + (curLine+1) + ' of ' + lines.length;
     wordPill.textContent = 'Words heard: ' + snap.eventsSeen;
-    hintBtn.disabled = !(listening || simTimer);
+    hintBtn.disabled = false; // hint works from the last known position, even after Stop
     Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('cur'); });
     var el = document.getElementById('line-'+curLine);
     if (el){ el.classList.add('cur'); if (scroll) el.scrollIntoView({block:'center', behavior:'smooth'}); }
@@ -153,11 +153,15 @@
 
   function startListen(){
     if (!tracker) return;
+    // restarting after a stop: the user may have moved to a different line —
+    // soften the tracker's memory so it can re-find them anywhere
+    if (tracker.snapshot().eventsSeen > 0) tracker.softReset();
     listening = true;
     listenBtn.textContent = "⏹ Stop"; listenBtn.classList.add('on'); listenBtn.classList.remove('primary');
     startRecog(); updateUI(false);
   }
   function stopListen(){
+    if (hintPlaying) endHint(false);
     listening = false; stopRecog();
     listenBtn.textContent = "🎙️ Listen"; listenBtn.classList.remove('on'); listenBtn.classList.add('primary');
     updateUI(false);
@@ -165,36 +169,53 @@
   listenBtn.addEventListener('click', function(){ listening ? stopListen() : startListen(); });
 
   // ---------- hint ----------
-  hintBtn.addEventListener('click', function(){
-    if (!tracker) return;
+  function startHint(){
     var snap = tracker.snapshot();
     var stuckWord = Math.min(Math.max(snap.wordIdx - 1, 0), words.length-1);
-    var line = words[stuckWord].line;
-    var startT = Math.max(0, words[stuckWord].start - 0.2);
-    var endLine = Math.min(line + 1, lines.length - 1);
-    hintStopAt = lines[endLine].lastWord !== undefined ? words[lines[endLine].lastWord].end : words[stuckWord].end;
-    // mute the recognizer BEFORE any audio plays (plan v3: keep session, drop input)
-    mutedUntil = Date.now() + 3650000; // muted until hint ends (cleared below)
-    if (recog) { try { recog.stop(); } catch(e){} }
+    hintLine = words[stuckWord].line;
+    var endLine = Math.min(hintLine + 1, lines.length - 1);
+    // pad both ends a little so no word is clipped at the cut points
+    var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.3);
+    hintStopAt = words[lines[endLine].lastWord].end + 0.3;
+    // fully close the recognizer BEFORE any audio plays (onend detached, so
+    // it cannot auto-restart and hear the hint through the speaker)
+    stopRecog();
+    mutedUntil = Date.now() + 3650000; // muted until the hint ends (set in endHint)
     Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('hintline'); });
-    for (var li = line; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
-    document.getElementById('line-'+line).scrollIntoView({block:'center', behavior:'smooth'});
-    hearing.textContent = "💡 Bhagat Ji: line " + (line+1) + "…";
+    for (var li = hintLine; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
+    document.getElementById('line-'+hintLine).scrollIntoView({block:'center', behavior:'smooth'});
+    hearing.textContent = "💡 Bhagat Ji: line " + (hintLine+1) + "…";
+    hintPlaying = true;
+    hintBtn.textContent = "⏹ Stop Hint";
+    // seek FIRST, play only once the seek has actually landed — playing
+    // before the seek completes is what made the audio sound chopped
+    var played = false;
+    function playNow(){ if (played) return; played = true; audio.removeEventListener('seeked', playNow); audio.play().catch(function(){}); }
+    audio.addEventListener('seeked', playNow);
     audio.currentTime = startT;
-    audio.play();
+    setTimeout(playNow, 500); // fallback if no seek was needed
+  }
+  function endHint(manual){
+    audio.pause();
+    hintStopAt = null;
+    hintPlaying = false;
+    hintBtn.textContent = "💡 Take Hint";
+    Array.prototype.forEach.call(main.querySelectorAll('.hintline'), function(el){ el.classList.remove('hintline'); });
+    // expect the user to re-recite from the start of the hinted line
+    tracker.setPosition(lines[hintLine].firstWord);
+    // resume: discard the first second (echo tail), then listen again
+    mutedUntil = Date.now() + 1000;
+    if (listening) startRecog();
+    setTimeout(function(){ if (Date.now() >= mutedUntil) mutedUntil = 0; }, 1100);
+    hearing.textContent = manual ? "Hint stopped." : "Hint done — keep going, I'm listening.";
+    updateUI(true);
+  }
+  hintBtn.addEventListener('click', function(){
+    if (!tracker) return;
+    if (hintPlaying) endHint(true); else startHint();
   });
   audio.addEventListener('timeupdate', function(){
-    if (hintStopAt !== null && audio.currentTime >= hintStopAt){
-      audio.pause(); hintStopAt = null;
-      // resume: discard the first second (echo tail), expect re-recitation of the stuck line
-      var snap = tracker.snapshot();
-      var line = words[Math.min(Math.max(snap.wordIdx - 1, 0), words.length-1)].line;
-      tracker.setPosition(lines[line].firstWord);
-      mutedUntil = Date.now() + 1000;
-      if (listening) startRecog();
-      setTimeout(function(){ if (Date.now() >= mutedUntil) mutedUntil = 0; }, 1100);
-      updateUI(true);
-    }
+    if (hintPlaying && hintStopAt !== null && audio.currentTime >= hintStopAt) endHint(false);
   });
 
   // ---------- demo simulation (no mic): noisy GT stream ----------
