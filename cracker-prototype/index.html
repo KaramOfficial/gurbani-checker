@@ -43,12 +43,6 @@
     <span class="pill" id="wordPill">Words heard: 0</span>
   </div>
   <div id="hearing"></div>
-  <div id="hintRow" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <span style="font-size:12.5px;opacity:.75">Hint plays:</span>
-    <button id="hintSmart" style="font-size:13px;padding:6px 12px">🧠 Smart</button>
-    <button id="hintNext" style="font-size:13px;padding:6px 12px">Next line</button>
-    <button id="hintSame" style="font-size:13px;padding:6px 12px">Same line</button>
-  </div>
 </header>
 <div id="msg"></div>
 <p class="note">Tap any line to tell me “I'm here”. Prototype recognizer: your browser's Punjabi speech recognition (Chrome on Android works best). The server CTC engine from the plan swaps in behind this same tracker later.</p>
@@ -76,7 +70,7 @@
   var words = [];       // {w, line, start, end}
   var lines = [];       // {text, firstWord, lastWord, paudi}
   var tracker = null;
-  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false, hintLine = 0;
+  var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, simTimer = null, hintPlaying = false;
   var tappedLine = -1, tappedAtEvents = -1; // last line the user tapped, and the heard-word count at that moment
   var fedInterim = {}; // recognizer result index -> words already fed from its interim transcript
 
@@ -220,63 +214,36 @@
     audioLocal = true;
   }).catch(function(){ /* stay on the streaming URL */ });
 
-  // ---------- hint mode ----------
-  // "next" = the original rule (the line after the highlighted line).
-  // "same" = the highlighted line itself.
-  // "smart" (default) = the fix for the line-boundary overshoot: when the
-  // cursor sits at the very START of the highlighted line, he has not
-  // begun that line yet — it IS the next line he needs, so play it, not
-  // the one after it. Mid-line he is on that line, so play the next one.
-  var hintMode = 'smart';
-  try { hintMode = localStorage.getItem('cracker-hint') || 'smart'; } catch(e){}
-  function pickHintLine(snap){
-    var curWord = Math.min(snap.wordIdx, words.length - 1);
-    var highlighted = words.length ? words[curWord].line : 0;
-    if (hintMode === 'next') return Math.min(highlighted + 1, lines.length - 1);
-    if (hintMode === 'same') return highlighted;
-    var atLineStart = curWord <= lines[highlighted].firstWord;
-    return atLineStart ? highlighted : Math.min(highlighted + 1, lines.length - 1);
-  }
-  function setHintMode(m){
-    hintMode = m;
-    try { localStorage.setItem('cracker-hint', m); } catch(e){}
-    [['hintSmart','smart'],['hintNext','next'],['hintSame','same']].forEach(function(pair){
-      var b = document.getElementById(pair[0]);
-      if (b){ b.style.background = hintMode === pair[1] ? 'var(--gold)' : 'var(--card)'; b.style.color = hintMode === pair[1] ? '#fff' : 'var(--ink)'; }
-    });
-  }
-  [['hintSmart','smart'],['hintNext','next'],['hintSame','same']].forEach(function(pair){
-    var b = document.getElementById(pair[0]);
-    if (b) b.addEventListener('click', function(){ setHintMode(pair[1]); });
-  });
-  setHintMode(hintMode);
-
   // ---------- hint ----------
-  // Per the user's direction, the hint is what comes NEXT: it plays from
-  // the start of the next line (plus one more line of runway), using the
-  // loaded track + the word timestamps — the same mechanism as the
-  // checker, where clicking anywhere plays from there instantly.
+  // WORD-ANCHORED HINT (user direction 2026-11-13, replaces the
+  // Smart/Next-line/Same-line modes, which never matched how he actually
+  // gets stuck): the tracker already stops within a word of where he
+  // stopped, and the dataset has per-word timestamps — so the hint
+  // simply REWINDS a couple of words from where he stopped and plays
+  // forward from there, through the rest of his line and the next one.
+  // He stops it himself the moment he has the word(s) he needed.
+  // Resume logic in endHint: stopped early -> he got his word, tracker
+  // stays where he stopped; played to the end -> he listened to the
+  // whole stretch, tracker moves to just after it.
+  var hintEndLine = 0;
   function startHint(){
     var snap = tracker.snapshot();
-    // THE RULE (user-stated, twice): the hint starts from the line AFTER
-    // the currently HIGHLIGHTED line — the highlighted line is the one he
-    // is reading; the hint's job is what comes next. The highlighted line
-    // is the line containing the cursor (next expected word). An earlier
-    // version keyed off the last HEARD word instead, which — whenever the
-    // cursor sits at the highlighted line's start — played the
-    // highlighted line itself.
-    hintLine = pickHintLine(snap);
-    var endLine = Math.min(hintLine + 1, lines.length - 1);
-    var startT = Math.max(0, words[lines[hintLine].firstWord].start - 0.05);
-    hintStopAt = words[lines[endLine].lastWord].end + 0.2;
+    var pos = Math.max(0, Math.min(snap.wordIdx, words.length)); // next word he needs
+    var startWord = Math.max(0, pos - 3); // two words before the last word he spoke
+    var curLine = words[Math.max(0, pos - 1)].line;
+    var startLine = words[startWord].line;
+    hintEndLine = Math.min(curLine + 1, lines.length - 1);
+    var startT = Math.max(0, words[startWord].start - 0.05);
+    hintStopAt = words[lines[hintEndLine].lastWord].end + 0.2;
     // fully close the recognizer BEFORE any audio plays (onend detached, so
     // it cannot auto-restart and hear the hint through the speaker)
     stopRecog();
     mutedUntil = Date.now() + 3650000; // muted until the hint ends (set in endHint)
     Array.prototype.forEach.call(main.querySelectorAll('.line'), function(el){ el.classList.remove('hintline'); });
-    for (var li = hintLine; li <= endLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
-    document.getElementById('line-'+hintLine).scrollIntoView({block:'center', behavior:'smooth'});
-    hearing.textContent = "💡 Bhagat Ji: line " + (hintLine+1) + "…";
+    for (var li = startLine; li <= hintEndLine; li++){ var el = document.getElementById('line-'+li); if (el) el.classList.add('hintline'); }
+    document.getElementById('line-'+startLine).scrollIntoView({block:'center', behavior:'smooth'});
+    var preview = words.slice(startWord, startWord + 3).map(function(x){ return x.w; }).join(' ');
+    hearing.textContent = "💡 Bhagat Ji, from “" + preview + " …”";
     hintPlaying = true;
     hintBtn.textContent = "⏹ Stop Hint";
     audio.currentTime = startT;
@@ -288,8 +255,7 @@
     hintPlaying = false;
     hintBtn.textContent = "💡 Take Hint";
     Array.prototype.forEach.call(main.querySelectorAll('.hintline'), function(el){ el.classList.remove('hintline'); });
-    // expect the user to continue from the first hinted line
-    tracker.setPosition(lines[hintLine].firstWord);
+    if (!manual) tracker.setPosition(Math.min(words.length, lines[hintEndLine].lastWord + 1));
     tappedLine = -1;
     // resume: discard the first second (echo tail), then listen again
     mutedUntil = Date.now() + 1000;
