@@ -18,6 +18,13 @@
   .pill.locked{background:#d9ecd9;border-color:var(--ok);color:var(--ok);font-weight:700}
   .pill.lost{background:#f6dcd8;border-color:var(--bad);color:var(--bad);font-weight:700}
   .pill.diverged{background:#f7e3c3;border-color:#d9a441;color:#8a6414;font-weight:700}
+  #baniBtn{font-size:15px;font-weight:700;padding:6px 12px;border-radius:10px;background:var(--goldsoft);border-color:var(--gold);color:var(--ink)}
+  #baniMenu{position:absolute;right:10px;top:50px;z-index:9;background:var(--card);border:1px solid #cbbd97;border-radius:12px;box-shadow:0 10px 30px rgba(60,45,10,.25);padding:6px;width:248px}
+  #baniMenu[hidden]{display:none}
+  .baniItem{display:flex;flex-direction:column;align-items:flex-start;width:100%;text-align:left;padding:8px 10px;border:none;background:transparent;border-radius:8px;font-family:inherit;cursor:pointer}
+  .baniItem .bi-name{font-size:16.5px;font-weight:700;color:var(--ink)}
+  .baniItem .bi-sub{font-size:11.5px;opacity:.65;color:var(--ink)}
+  .baniItem.cur{background:var(--goldsoft)}
   #suggestPop{position:fixed;left:50%;transform:translateX(-50%);bottom:80px;z-index:7;background:var(--card);border:1.5px solid var(--gold);border-radius:14px;box-shadow:0 8px 28px rgba(60,45,10,.28);padding:10px 12px;display:flex;gap:10px;align-items:center;max-width:94vw;width:430px}
   #suggestPop[hidden]{display:none}
   #suggestPop .sg-main{flex:1;min-width:0}
@@ -47,12 +54,17 @@
 </head>
 <body>
 <header>
-  <h1>🎧 Cracker — Listen &amp; Hint <span style="font-size:13px;opacity:.6">prototype</span></h1>
-  <p class="sub">ਅਨੰਦੁ ਸਾਹਿਬ · recite, I follow · stuck? take a hint from Bhagat Ji's Paath</p>
+  <div style="display:flex;align-items:center;gap:8px">
+    <h1 style="flex:1">🎧 Cracker — Listen &amp; Hint</h1>
+    <button id="baniBtn"><span id="baniName">ਅਨੰਦੁ ਸਾਹਿਬ</span> ▾</button>
+  </div>
+  <p class="sub">recite, I follow · stuck? take a hint from Bhagat Ji's Paath</p>
+  <div id="baniMenu" hidden></div>
   <div id="status">
     <span class="pill searching" id="statePill">Not listening</span>
     <span class="pill" id="linePill">Line —</span>
     <span class="pill" id="wordPill">Words heard: 0</span>
+    <button class="pill" id="awakePill" style="cursor:pointer;font-family:inherit">🔆 Screen awake</button>
   </div>
   <div id="hearing"></div>
   <div id="speedRow" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -100,7 +112,14 @@
 <script src="aligner.js"></script>
 <script>
 (function(){
-  var DATA_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.json";
+  var BANIS = [
+    { id:'anand', name:'ਅਨੰਦੁ ਸਾਹਿਬ', sub:'Anand Sahib · 210 lines', kind:'anand',
+      json:'https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.json', audio:'https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3' },
+    { id:'chaupai', name:'ਚੌਪਈ ਸਾਹਿਬ', sub:'Chaupai Sahib · 130 lines', kind:'sections',
+      json:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.json', audio:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.mp3' }
+  ];
+  var curBani = BANIS[0];
+  try { var savedBani = localStorage.getItem('cracker-bani'); BANIS.forEach(function(b){ if (b.id === savedBani) curBani = b; }); } catch(e){}
   var words = [];       // {w, line, start, end}
   var lines = [];       // {text, firstWord, lastWord, paudi}
   var tracker = null;
@@ -113,24 +132,49 @@
   var hearing = document.getElementById('hearing'), audio = document.getElementById('refAudio');
   var listenBtn = document.getElementById('listenBtn'), hintBtn = document.getElementById('hintBtn');
 
-  fetch(DATA_URL).then(function(r){ return r.json(); }).then(function(d){
-    var allLines = [];
-    d.head_lines.forEach(function(l){ allLines.push({l:l, paudi:0}); });
-    d.paudis.forEach(function(p){ p.lines.forEach(function(l){ allLines.push({l:l, paudi:p.paudi}); }); });
-    allLines.forEach(function(item, li){
-      var first = words.length;
-      item.l.words.forEach(function(w){ words.push({w:w.word, line:li, start:w.start, end:w.end}); });
-      lines.push({text:item.l.text, firstWord:first, lastWord:words.length-1, paudi:item.paudi});
-    });
-    tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; })); tracker.setEscapeMode(escapeMode);
-    render();
-    updateUI(false);
-  }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
+  function loadBani(id){
+    var B = BANIS[0];
+    BANIS.forEach(function(b){ if (b.id === id) B = b; });
+    if (tracker) { try { localStorage.setItem('cracker-pos-' + curBani.id, String(tracker.snapshot().wordIdx)); } catch(e){} }
+    if (listening) stopListen();
+    if (hintPlaying) endHint(true);
+    curBani = B;
+    try { localStorage.setItem('cracker-bani', B.id); } catch(e){}
+    document.getElementById('baniName').textContent = B.name;
+    words = []; lines = []; tracker = null;
+    hearing.textContent = '';
+    main.innerHTML = "<p style='padding:12px'>Loading " + B.name + "\u2026</p>";
+    fetch(B.json).then(function(r){ return r.json(); }).then(function(d){
+      var groups = [];
+      if (B.kind === 'anand') {
+        groups.push({ label:'\u0A06\u0A30\u0A2D', lines:d.head_lines });
+        d.paudis.forEach(function(p){ groups.push({ label:'\u0A2A\u0A09\u0A5C\u0A40 ' + p.paudi, lines:p.lines }); });
+      } else {
+        d.sections.forEach(function(s){ groups.push({ label:s.section, lines:s.lines }); });
+      }
+      var allLines = [];
+      groups.forEach(function(g){ g.lines.forEach(function(l){ allLines.push({l:l, paudi:g.label}); }); });
+      allLines.forEach(function(item, li){
+        var first = words.length;
+        item.l.words.forEach(function(w){ words.push({w:w.word, line:li, start:w.start, end:w.end}); });
+        lines.push({text:item.l.text, firstWord:first, lastWord:words.length-1, paudi:item.paudi});
+      });
+      tracker = new CrackerAligner.Tracker(words.map(function(x){ return {w:x.w, line:x.line}; })); tracker.setEscapeMode(escapeMode);
+      render();
+      var saved = 0;
+      try { saved = parseInt(localStorage.getItem('cracker-pos-' + B.id)) || 0; } catch(e){}
+      if (saved > 0 && saved < words.length) tracker.setPosition(saved);
+      updateUI(false);
+      setAudioForBani(B);
+    }).catch(function(e){ main.innerHTML = "<p style='padding:12px'>Could not load the Bani data. Check connection and reload.</p>"; });
+  }
+  loadBani(curBani.id);
+
 
   function render(){
     var html = "", lastPaudi = -1;
     lines.forEach(function(L, li){
-      if (L.paudi !== lastPaudi){ html += '<div class="paudi">' + (L.paudi===0 ? 'ਆਰੰਭ' : 'ਪਉੜੀ ' + L.paudi) + '</div>'; lastPaudi = L.paudi; }
+      if (L.paudi !== lastPaudi){ html += '<div class="paudi">' + L.paudi + '</div>'; lastPaudi = L.paudi; }
       html += '<div class="line" data-line="'+li+'" id="line-'+li+'">';
       for (var wi = L.firstWord; wi <= L.lastWord; wi++) html += '<span class="w" id="w-'+wi+'">' + escapeHtml(words[wi].w) + '</span> ';
       html += '</div>';
@@ -304,13 +348,18 @@
   // timestamp is a local jump — no streaming per click, no seek stalls,
   // no choppiness. Until the download finishes, the element streams from
   // the network URL as a fallback.
-  var AUDIO_URL = "https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3";
   var audioLocal = false;
-  fetch(AUDIO_URL).then(function(r){ return r.blob(); }).then(function(blob){
-    var url = URL.createObjectURL(blob);
-    if (audio.paused && !hintPlaying) audio.src = url;
-    audioLocal = true;
-  }).catch(function(){ /* stay on the streaming URL */ });
+  function setAudioForBani(B){
+    audioLocal = false;
+    if (!hintPlaying) audio.src = B.audio;
+    fetch(B.audio).then(function(r){ return r.blob(); }).then(function(blob){
+      if (curBani.id !== B.id) return; // switched away while it downloaded
+      var url = URL.createObjectURL(blob);
+      if (audio.paused && !hintPlaying) audio.src = url;
+      audioLocal = true;
+    }).catch(function(){ /* stay on the streaming URL */ });
+  }
+
 
   // ---------- hint speed ----------
   // Bhagat Ji's Paath is unhurried; a fluent reciter who is only stuck
@@ -379,6 +428,67 @@
     else tracker.unlockToShadow();
     updateUI(true);
   };
+
+
+  // ---------- Bani selector (popup dropdown) ----------
+  var baniBtn = document.getElementById('baniBtn'), baniMenu = document.getElementById('baniMenu');
+  BANIS.forEach(function(B){
+    var b = document.createElement('button');
+    b.className = 'baniItem'; b.setAttribute('data-bani', B.id);
+    b.innerHTML = '<span class="bi-name">' + B.name + '</span><span class="bi-sub">' + B.sub + '</span>';
+    b.addEventListener('click', function(){
+      baniMenu.hidden = true;
+      if (B.id !== curBani.id) loadBani(B.id);
+    });
+    baniMenu.appendChild(b);
+  });
+  baniBtn.addEventListener('click', function(e){
+    e.stopPropagation();
+    Array.prototype.forEach.call(baniMenu.querySelectorAll('.baniItem'), function(b){
+      b.classList.toggle('cur', b.getAttribute('data-bani') === curBani.id);
+    });
+    baniMenu.hidden = !baniMenu.hidden;
+  });
+  document.addEventListener('click', function(e){
+    if (!baniMenu.hidden && !baniMenu.contains(e.target)) baniMenu.hidden = true;
+  });
+
+  // ---------- keep screen awake (while using) ----------
+  // Web: the Screen Wake Lock API, re-acquired whenever the page comes
+  // back to the front. App: the native keep-screen-on window flag,
+  // toggled through the bridge. On by default; the pill in the status
+  // row is the off switch.
+  var awakeOn = true;
+  try { awakeOn = localStorage.getItem('cracker-awake') !== 'off'; } catch(e){}
+  var wakeLock = null;
+  var awakePill = document.getElementById('awakePill');
+  function paintAwake(){
+    if (!awakePill) return;
+    awakePill.textContent = awakeOn ? '\u{1F506} Screen awake' : '\u{1F319} Screen may sleep';
+    awakePill.style.opacity = awakeOn ? '1' : '.55';
+  }
+  function applyWake(){
+    if (window.NativeBridge && NativeBridge.setKeepAwake) { try { NativeBridge.setKeepAwake(awakeOn); } catch(e){} }
+    if (!('wakeLock' in navigator)) return;
+    if (awakeOn && !wakeLock) {
+      navigator.wakeLock.request('screen').then(function(wl){
+        wakeLock = wl;
+        wl.addEventListener('release', function(){ wakeLock = null; });
+      }).catch(function(){});
+    } else if (!awakeOn && wakeLock) {
+      wakeLock.release(); wakeLock = null;
+    }
+  }
+  if (awakePill) awakePill.addEventListener('click', function(){
+    awakeOn = !awakeOn;
+    try { localStorage.setItem('cracker-awake', awakeOn ? 'on' : 'off'); } catch(e){}
+    paintAwake(); applyWake();
+  });
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible') applyWake();
+  });
+  document.addEventListener('pointerdown', function(){ applyWake(); });
+  paintAwake(); applyWake();
 
   // ---------- hint ----------
   // WORD-ANCHORED HINT (user direction 2026-11-13, replaces the

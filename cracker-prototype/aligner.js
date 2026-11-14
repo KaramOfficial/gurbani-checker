@@ -115,6 +115,7 @@
     this._suggest = null;
     this._jumped = false;
     this.buzzLatched = false;
+    this.pendingRestart = -1;
   }
 
   // The page calls this when the reciter paused before the incoming
@@ -463,6 +464,7 @@
     this.mode = "locked";
     this.anchor = at;
     this.divCause = null;
+    this.pendingRestart = -1;
     this.missRun = 0;
     this.winMiss = [];
     this.resumeRun = 0;
@@ -501,6 +503,19 @@
     }
 
     if (this.mode === "locked") {
+      // a restart landing is only TENTATIVE until the beam confirms
+      // it with a sequential advance — a one-event beam wobble onto a
+      // line start must not drag the display backward
+      if (this.pendingRestart >= 0) {
+        var pr = this.pendingRestart;
+        this.pendingRestart = -1;
+        if (beamIdx > pr && beamIdx <= pr + 3) {
+          this.anchor = beamIdx;
+          this.stagRun = 0;
+          this.prevBeamIdx = beamIdx;
+          return;
+        }
+      }
       // Guarded following: the beam's scoring is the robust matcher
       // (it absorbs splits, merges and sound-alike substitutions that
       // a strict word-by-word walk cannot — measured on the real
@@ -515,10 +530,15 @@
       var lsPrev = lsCur > 0 ? this.lineStartOf(lsCur - 1) : -1;
       var restartLanding = Math.abs(beamIdx - (lsCur + 1)) <= 1 || (lsPrev >= 0 && Math.abs(beamIdx - (lsPrev + 1)) <= 1);
       if (delta >= -2 && delta <= 4) {
-        this.anchor = beamIdx;
+        // Calm display: while locked the shown position NEVER steps
+        // backward for a wobble (recognizer revisions make the beam
+        // jitter -1/-2 constantly) and glides forward at most 2 words
+        // per heard word, so the highlight walks instead of hopping.
+        // A genuine line restart (below) is the only backward move.
+        if (beamIdx > this.anchor) this.anchor = Math.min(beamIdx, this.anchor + 2);
         this.stagRun = 0;
       } else if (delta < -2 && restartLanding) {
-        this.anchor = beamIdx; // line restart — follow silently
+        this.pendingRestart = beamIdx; // line restart? — confirm next event
         this.stagRun = 0;
       } else if (delta > 4 || delta < -2) {
         // A beam leap is ambiguous: the beam also leaps when it
@@ -531,7 +551,9 @@
         var fitHere = this.seqScore(this.anchor - n8, seq8);
         var fitThere = this.seqScore(beamIdx - n8, seq8);
         if (fitHere >= 0.55) {
-          this.anchor = beamIdx;
+          // revival: follow, but glide — never a visible hop,
+          // forward or back
+          this.anchor = beamIdx > this.anchor ? Math.min(beamIdx, this.anchor + 4) : Math.max(beamIdx, this.anchor - 2);
           this.stagRun = 0;
         } else {
           this.mode = "diverged";
@@ -576,7 +598,9 @@
     if (this.divCause === "stagnation" && this.beamRun >= 6 &&
         beamIdx >= this.frozenAnchor - 14 && beamIdx <= this.frozenAnchor + 45 &&
         (this.state === "locked" || this.state === "tentative")) {
-      this.engageLock(beamIdx);
+      // snap back to the frozen word when the shadow is within a few
+      // words of it — the display then doesn't move AT ALL on a heal
+      this.engageLock(Math.abs(beamIdx - this.frozenAnchor) <= 3 ? this.frozenAnchor : beamIdx);
       return;
     }
     // a local resume is the beam returning near the frozen anchor and
@@ -586,7 +610,10 @@
     this.prevBeamIdx = beamIdx;
     if (nearFrozen && seqDelta >= 0 && seqDelta <= 3 && (this.state === "locked" || this.state === "tentative")) {
       this.resumeRun++;
-      if (this.resumeRun >= 3) { this.engageLock(beamIdx); return; }
+      if (this.resumeRun >= 3) {
+        this.engageLock(Math.abs(beamIdx - this.frozenAnchor) <= 3 ? this.frozenAnchor : beamIdx);
+        return;
+      }
     } else {
       this.resumeRun = 0;
     }
