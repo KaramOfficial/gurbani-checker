@@ -2,7 +2,7 @@
  * Caches the app shell and, at runtime, the Bani JSON + reference MP3
  * (cross-origin, GitHub Pages serves CORS *), so Listen & Hint keep
  * working with no network. */
-var CACHE = "cracker-v18";
+var CACHE = "cracker-v19";
 var SHELL = ["./", "./index.html", "./aligner.js"];
 
 self.addEventListener("install", function (e) {

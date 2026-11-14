@@ -126,7 +126,7 @@
   var tracker = null;
   var listening = false, recog = null, mutedUntil = 0, hintStopAt = null, hintPlaying = false;
   var tappedLine = -1, tappedAtEvents = -1; // last line the user tapped, and the heard-word count at that moment
-  var fedInterim = {}; // recognizer result index -> words already fed from its interim transcript
+  // (stable-word feeding state lives with feedResultStable below)
 
   var main = document.getElementById('main'), msg = document.getElementById('msg');
   var statePill = document.getElementById('statePill'), linePill = document.getElementById('linePill'), wordPill = document.getElementById('wordPill');
@@ -281,6 +281,38 @@
 
   // ---------- speech recognition (prototype engine) ----------
 
+
+  // STABLE-WORD FEEDING: interim transcripts are the recognizer's
+  // forecasts — they mutate, split and merge between snapshots.
+  // Feeding their growing tails (the old rule) fed the follower
+  // guessed words (it ran ahead: "forecasting"), phantom revised
+  // copies and whole duplicate finals, and the follower wandered
+  // even when the recognized words were right. Now a word is fed
+  // only once it has STOPPED changing: the prefix two consecutive
+  // snapshots agree on; the remainder lands when the result
+  // finalizes. A re-delivered identical final feeds nothing.
+  var recogState = {}; // result idx -> {last:[words], fed:n}
+  var lastFinal = {};  // result idx -> finalized transcript
+  function feedResultStable(i, tr, isFinal){
+    var ws = tr.split(/\s+/);
+    if (isFinal && lastFinal[i] === tr) { delete recogState[i]; return 0; }
+    var st = recogState[i];
+    if (!st) st = recogState[i] = { last: [], fed: 0 };
+    var fed = 0, snap = null;
+    if (isFinal){
+      if (ws.length > st.fed){ ws.slice(st.fed).forEach(function(w){ fed++; snap = feedTracked(w, true); }); }
+      lastFinal[i] = tr;
+      delete recogState[i];
+    } else {
+      var stable = 0;
+      while (stable < st.last.length && stable < ws.length && st.last[stable] === ws[stable]) stable++;
+      if (stable > st.fed){ ws.slice(st.fed, stable).forEach(function(w){ fed++; snap = feedTracked(w, true); }); st.fed = stable; }
+      st.last = ws;
+    }
+    checkNudge(snap);
+    return fed;
+  }
+
   // ---------- lag monitor (low-internet mode) ----------
   // Event-level packet signals (design v2.1, AI-Mode-reviewed): enter
   // "lagging" when results arrive late+heavy repeatedly, when a meaty
@@ -338,7 +370,7 @@
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function startRecog(){
     if (!SR){ msg.textContent = "This browser cannot listen (no speech recognition — Safari/Firefox don't offer it). Use Google Chrome (phone or desktop) for listening; tap-a-line + Hint still work here."; return; }
-    fedInterim = {}; // a fresh recognition session restarts its result list
+    recogState = {}; lastFinal = {}; // a fresh session restarts its result list
     lagEndAt = 0;
     recog = new SR();
     recog.lang = 'pa-IN';
@@ -352,26 +384,14 @@
       for (var i = ev.resultIndex; i < ev.results.length; i++){
         var tr = ev.results[i][0].transcript.trim();
         if (!tr) continue;
-        // Feed interim words too, not just finals — finals on Android can
-        // trail the voice by a full line, which made the tracker's position
-        // (and therefore the hint) lag one line behind the reciter. Feed
-        // only the NEW tail of each result so revisions don't double-feed.
-        var ws = tr.split(/\s+/);
-        var already = fedInterim[i] || 0;
-        if (ws.length < already) already = 0;
-        if (ws.length > already){ fedNow += ws.length - already; var snap = null; ws.slice(already).forEach(function(w){ snap = feedTracked(w, true); }); checkNudge(snap); }
-        if (ev.results[i].isFinal){ finalsNow++;
-          hearing.textContent = "Heard: " + tr;
-          delete fedInterim[i];
-        } else {
-          fedInterim[i] = ws.length;
-          hearing.textContent = "Listening… " + tr;
-        }
+        fedNow += feedResultStable(i, tr, ev.results[i].isFinal);
+        if (ev.results[i].isFinal){ finalsNow++; hearing.textContent = "Heard: " + tr; }
+        else hearing.textContent = "Listening… " + tr;
         updateUI(true);
       }
       lagPacket(fedNow, finalsNow);
     };
-    recog.onend = function(){ lagEndAt = Date.now(); lagEndActivityGap = lagEndAt - Math.max(lagSpeechAt, lagLastPktAt); if (listening) { fedInterim = {}; try { recog.start(); } catch(e){} } };
+    recog.onend = function(){ lagEndAt = Date.now(); lagEndActivityGap = lagEndAt - Math.max(lagSpeechAt, lagLastPktAt); if (listening) { recogState = {}; lastFinal = {}; try { recog.start(); } catch(e){} } };
     recog.onerror = function(e){
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         msg.textContent = "🎙️ Mic is blocked for this site. Desktop Chrome: click the icon at the left of the address bar → Site settings → Microphone → Allow. On a Mac also check System Settings → Privacy & Security → Microphone → Chrome ON. Then tap Listen again.";
