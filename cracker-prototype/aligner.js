@@ -116,6 +116,7 @@
     this._jumped = false;
     this.buzzLatched = false;
     this.pendingRestart = -1;
+    this.graceEvents = 0;   // post-network-gap words that may not accuse
   }
 
   // The page calls this when the reciter paused before the incoming
@@ -124,6 +125,15 @@
   // restart from somewhere else, not a mid-flow mistake.
   Tracker.prototype.notePause = function () {
     this.pausePending = true;
+  };
+
+  // A long gap in RESULTS ARRIVING (the online engine on a slow
+  // connection): the words that land next are late, batched, and often
+  // garbled interim revisions. They may still move the tracker when
+  // they fit, but they must never trigger a divergence or a buzz —
+  // the network misbehaving is not the reciter going off-track.
+  Tracker.prototype.noteLongGap = function () {
+    this.graceEvents = 6;
   };
 
   // avg sim of heardSeq (folded, length n) against target words [start, start+n)
@@ -229,7 +239,7 @@
     var isNew = !(p && Math.abs(targetEnd - (p.end + (this.eventsSeen - p.at))) <= 2);
     if (isNew) {
       this.pendingJump = p = { end: targetEnd, at: this.eventsSeen, count: 1 };
-      if (this.mode === "following" && protectedRun && !gated && cand.local < 0.5 &&
+      if (this.mode === "following" && this.graceEvents <= 0 && protectedRun && !gated && cand.local < 0.5 &&
           !this.episodeNudged && this.eventsSeen - this.nudgeAt >= 15) {
         this._nudge = true;
         this.nudgeAt = this.eventsSeen;
@@ -475,6 +485,8 @@
 
   Tracker.prototype.lockStep = function (inw) {
     var beamIdx = this.cursor, k;
+    var inGrace = this.graceEvents > 0;
+    if (this.graceEvents > 0) this.graceEvents--;
     // shadow bookkeeping: how consistently is the beam tracking?
     if (this.state === "locked" || this.state === "tentative") {
       var adv = beamIdx - this.beamRunPos;
@@ -550,9 +562,10 @@
         var H8 = this.history, n8 = Math.min(8, H8.length), seq8 = H8.slice(-n8);
         var fitHere = this.seqScore(this.anchor - n8, seq8);
         var fitThere = this.seqScore(beamIdx - n8, seq8);
-        if (fitHere >= 0.55) {
+        if (fitHere >= 0.55 || inGrace) {
           // revival: follow, but glide — never a visible hop,
-          // forward or back
+          // forward or back. (In a post-gap grace window a leap is
+          // presumed to be the late batch landing, not a move by him.)
           this.anchor = beamIdx > this.anchor ? Math.min(beamIdx, this.anchor + 4) : Math.max(beamIdx, this.anchor - 2);
           this.stagRun = 0;
         } else {
@@ -570,7 +583,9 @@
       if (beamIdx <= this.anchor) {
         var H = this.history;
         var fit = H.length >= 4 ? this.seqScore(this.anchor - Math.min(5, H.length), H.slice(-5)) : 1;
-        if (fit < 0.5) {
+        if (fit < 0.5 && inGrace) {
+          this.stagRun = 0; // late/garbled batch — not evidence against him
+        } else if (fit < 0.5) {
           this.stagRun = (this.stagRun || 0) + 1;
           if (this.stagRun >= 5) {
             this.mode = "diverged";

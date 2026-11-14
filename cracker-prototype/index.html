@@ -250,6 +250,7 @@
   function feedTracked(w, timeGap){
     var now = Date.now();
     if (timeGap && lastFeedAt && now - lastFeedAt > 1000) tracker.notePause();
+    if (timeGap && lastFeedAt && now - lastFeedAt > 1500 && tracker.noteLongGap) tracker.noteLongGap();
     lastFeedAt = now;
     return tracker.feed(w);
   }
@@ -297,6 +298,7 @@
         // only the NEW tail of each result so revisions don't double-feed.
         var ws = tr.split(/\s+/);
         var already = fedInterim[i] || 0;
+        if (ws.length < already) already = 0;
         if (ws.length > already){ var snap = null; ws.slice(already).forEach(function(w){ snap = feedTracked(w, true); }); checkNudge(snap); }
         if (ev.results[i].isFinal){
           hearing.textContent = "Heard: " + tr;
@@ -308,7 +310,7 @@
         updateUI(true);
       }
     };
-    recog.onend = function(){ if (listening) { try { recog.start(); } catch(e){} } };
+    recog.onend = function(){ if (listening) { fedInterim = {}; try { recog.start(); } catch(e){} } };
     recog.onerror = function(e){
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         msg.textContent = "🎙️ Mic is blocked for this site. Desktop Chrome: click the icon at the left of the address bar → Site settings → Microphone → Allow. On a Mac also check System Settings → Privacy & Security → Microphone → Chrome ON. Then tap Listen again.";
