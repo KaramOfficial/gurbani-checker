@@ -65,6 +65,7 @@
     <span class="pill" id="linePill">Line —</span>
     <span class="pill" id="wordPill">Words heard: 0</span>
     <button class="pill" id="awakePill" style="cursor:pointer;font-family:inherit">🔆 Screen awake</button>
+    <span class="pill" id="lagPill" style="display:none">📶 Slow connection — alerts relaxed</span>
   </div>
   <div id="hearing"></div>
   <div id="speedRow" style="margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -279,16 +280,75 @@
   function checkNudge(snap){ if (snap && snap.nudge) doNudge(); }
 
   // ---------- speech recognition (prototype engine) ----------
+
+  // ---------- lag monitor (low-internet mode) ----------
+  // Event-level packet signals (design v2.1, AI-Mode-reviewed): enter
+  // "lagging" when results arrive late+heavy repeatedly, when a meaty
+  // final lands with almost no interims before it (buffering), or when
+  // a mid-speech recognizer restart eats words (dropout). Exit only
+  // after 4 healthy finals in a row. While lagging, the tracker makes
+  // divergence blatant-only and prefers silent proven-flow catch-ups.
+  var lagOn = false, lagPkts = [], lagLastPktAt = 0, lagInterims = 0,
+      lagFinals = [], lagSpeechAt = 0, lagEndAt = 0, lagEndActivityGap = 1e9;
+  function lagSet(on){
+    if (on === lagOn) return;
+    lagOn = on;
+    if (tracker && tracker.noteLag) tracker.noteLag(on);
+    var el = document.getElementById('lagPill');
+    if (el) el.style.display = on ? '' : 'none';
+  }
+  function lagPacket(fedWords, finals){
+    var now = Date.now();
+    var gap = lagLastPktAt ? now - lagLastPktAt : 0;
+    lagLastPktAt = now;
+    lagPkts.push({ gap: gap, words: fedWords });
+    if (lagPkts.length > 8) lagPkts.shift();
+    if (finals > 0){
+      for (var f = 0; f < finals; f++){
+        lagFinals.push({ at: now, interims: lagInterims });
+        if (lagFinals.length > 4) lagFinals.shift();
+      }
+      if (fedWords >= 5 && lagInterims < 2) lagSet(true); // buffered flush
+      lagInterims = 0;
+      if (lagOn && lagFinals.length === 4){
+        var ok = true;
+        for (var k = 1; k < 4; k++) if (lagFinals[k].at - lagFinals[k - 1].at >= 2500) ok = false;
+        for (var m = 0; m < 4; m++) if (lagFinals[m].interims < 2) ok = false;
+        if (ok) lagSet(false);
+      }
+    } else {
+      lagInterims++;
+    }
+    if (!lagOn && lagPkts.length >= 5){
+      var heavy = 0;
+      lagPkts.forEach(function(p){ if (p.gap > 1800 && p.words >= 4) heavy++; });
+      if (heavy >= 3) lagSet(true);
+    }
+  }
+  function lagRestartCheck(){
+    if (!lagEndAt) return;
+    var gap = Date.now() - lagEndAt;
+    lagEndAt = 0;
+    // speech was active right up to the restart -> the gap ate words
+    if (gap > 800 && lagEndActivityGap < 1500){
+      if (tracker && tracker.noteDropout) tracker.noteDropout();
+      lagSet(true);
+    }
+  }
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   function startRecog(){
     if (!SR){ msg.textContent = "This browser cannot listen (no speech recognition — Safari/Firefox don't offer it). Use Google Chrome (phone or desktop) for listening; tap-a-line + Hint still work here."; return; }
     fedInterim = {}; // a fresh recognition session restarts its result list
+    lagEndAt = 0;
     recog = new SR();
     recog.lang = 'pa-IN';
     recog.continuous = true;
     recog.interimResults = true;
+    recog.onstart = function(){ lagRestartCheck(); };
+    recog.onspeechstart = function(){ lagSpeechAt = Date.now(); };
     recog.onresult = function(ev){
       if (Date.now() < mutedUntil) return;
+      var fedNow = 0, finalsNow = 0;
       for (var i = ev.resultIndex; i < ev.results.length; i++){
         var tr = ev.results[i][0].transcript.trim();
         if (!tr) continue;
@@ -299,8 +359,8 @@
         var ws = tr.split(/\s+/);
         var already = fedInterim[i] || 0;
         if (ws.length < already) already = 0;
-        if (ws.length > already){ var snap = null; ws.slice(already).forEach(function(w){ snap = feedTracked(w, true); }); checkNudge(snap); }
-        if (ev.results[i].isFinal){
+        if (ws.length > already){ fedNow += ws.length - already; var snap = null; ws.slice(already).forEach(function(w){ snap = feedTracked(w, true); }); checkNudge(snap); }
+        if (ev.results[i].isFinal){ finalsNow++;
           hearing.textContent = "Heard: " + tr;
           delete fedInterim[i];
         } else {
@@ -309,8 +369,9 @@
         }
         updateUI(true);
       }
+      lagPacket(fedNow, finalsNow);
     };
-    recog.onend = function(){ if (listening) { fedInterim = {}; try { recog.start(); } catch(e){} } };
+    recog.onend = function(){ lagEndAt = Date.now(); lagEndActivityGap = lagEndAt - Math.max(lagSpeechAt, lagLastPktAt); if (listening) { fedInterim = {}; try { recog.start(); } catch(e){} } };
     recog.onerror = function(e){
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         msg.textContent = "🎙️ Mic is blocked for this site. Desktop Chrome: click the icon at the left of the address bar → Site settings → Microphone → Allow. On a Mac also check System Settings → Privacy & Security → Microphone → Chrome ON. Then tap Listen again.";

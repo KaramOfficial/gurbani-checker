@@ -117,6 +117,11 @@
     this.buzzLatched = false;
     this.pendingRestart = -1;
     this.graceEvents = 0;   // post-network-gap words that may not accuse
+    this.lagging = false;   // page's lag monitor: connection is degraded
+    this.dropoutFlag = false; // a mid-speech recognizer restart ate words
+    this.dropWatchPos = -1; // shadow position under dropout observation
+    this.dropWatchRun = 0;  // sequential shadow words seen there
+    this.heardSince = []; // folded words heard recently (bounded window)
   }
 
   // The page calls this when the reciter paused before the incoming
@@ -134,6 +139,22 @@
   // the network misbehaving is not the reciter going off-track.
   Tracker.prototype.noteLongGap = function () {
     this.graceEvents = 6;
+  };
+
+  // The page's lag monitor (event-level packet signals, AI-Mode-reviewed
+  // design v2.1): while the connection is degraded, divergence must be
+  // BLATANT to buzz, and proven-flow catch-ups replace accusations.
+  Tracker.prototype.noteLag = function (on) {
+    this.lagging = !!on;
+  };
+
+  // A recognizer restart while speech was active: the audio during the
+  // gap was EATEN by the network, not skipped by the reciter. The flag
+  // lives until the next lock engagement; it suppresses the buzz for
+  // this episode and enables the dropout catch-up in the diverged state.
+  Tracker.prototype.noteDropout = function () {
+    this.dropoutFlag = true;
+    this.lagging = true;
   };
 
   // avg sim of heardSeq (folded, length n) against target words [start, start+n)
@@ -307,6 +328,8 @@
     this._jumped = false;
     this.history.push(inw);
     if (this.history.length > 14) this.history.shift();
+    this.heardSince.push(inw);
+    if (this.heardSince.length > 60) this.heardSince.shift();
     if (this.checkJump()) {
       this.lockStep(inw);
       var js = this.snapshot();
@@ -481,6 +504,74 @@
     this.stagRun = 0;
     this.buzzLatched = false;
     this._suggest = null;
+    this.dropoutFlag = false;
+    this.dropWatchPos = -1;
+    this.dropWatchRun = 0;
+    this.heardSince = [];
+  };
+
+  // Does the shadow's last-8 window contain a discriminating word that
+  // does NOT appear within ±2 lines of the anchor? If not, a "leap"
+  // there is a refrain twin, not a move (AI Mode round 2, rule B fix).
+  Tracker.prototype.shadowWindowForeignRare = function (beamIdx) {
+    if (!this.freq) this.spanHasRare(0, 0);
+    var aLine = this.words[Math.max(0, Math.min(this.anchor - 1, this.words.length - 1))].line;
+    var near = {};
+    for (var i = 0; i < this.words.length; i++) {
+      if (Math.abs(this.words[i].line - aLine) <= 2) near[this.folded[i]] = true;
+    }
+    for (var k = Math.max(0, beamIdx - 8); k < Math.min(beamIdx, this.folded.length); k++) {
+      var w = this.folded[k];
+      if ((this.freq[w] || 99) <= 90 && !near[w]) return true;
+    }
+    return false;
+  };
+
+  // Ordered fuzzy coverage: how much of the text span [from, to) is
+  // accounted for, in order, by the words heard since the anchor last
+  // advanced? Greedy in-order matching with the usual word similarity
+  // (partial credit) — the "did he SAY those lines?" test.
+  Tracker.prototype.spanCoverage = function (from, to) {
+    var heard = this.heardSince, hi = 0, credit = 0, disc = false;
+    if (!this.freq) this.spanHasRare(0, 0);
+    for (var s = from; s < to; s++) {
+      var sw = this.folded[s], bestJ = -1, bestSim = 0;
+      for (var j = hi; j < Math.min(hi + 6, heard.length); j++) {
+        var sm = sim(heard[j], sw);
+        if (sm > bestSim) { bestSim = sm; bestJ = j; }
+      }
+      if (bestJ >= 0 && bestSim >= 0.68) {
+        credit += bestSim;
+        hi = bestJ + 1;
+        if ((this.freq[sw] || 99) <= 90) disc = true;
+      }
+    }
+    return { cov: (to - from) > 0 ? credit / (to - from) : 0, disc: disc };
+  };
+
+  // SILENT CATCH-UP (all modes, incl. manual): if the shadow is ahead
+  // of the anchor and the heard words PROVE the intervening lines were
+  // said — he flowed, the network lagged — glide to the shadow with no
+  // buzz and no escape semantics. Compound span rules (AI Mode v2.1):
+  // 1 line: coverage >= 0.65, no rare-word demand. 2-3 lines, short
+  // span (<8 words): coverage >= 0.75 + a rare word in the span or the
+  // landing line's head. 2-3 lines, span >= 8: coverage >= 0.60 + a
+  // rare word in the span. Beyond 3 lines / 45 words: not eligible.
+  Tracker.prototype.tryCoverageCatchup = function (beamIdx) {
+    var from = this.mode === "diverged" ? this.frozenAnchor : this.anchor;
+    if (from < 0 || beamIdx <= from) return false;
+    var spanLen = beamIdx - from;
+    if (spanLen > 45) return false;
+    var linesCrossed = this.words[beamIdx - 1].line - this.words[Math.max(0, from - 1)].line;
+    if (linesCrossed < 1 || linesCrossed > 3) return false;
+    var c = this.spanCoverage(from, beamIdx);
+    var ok = false;
+    if (linesCrossed === 1) ok = c.cov >= 0.65;
+    else if (spanLen < 8) ok = c.cov >= 0.75 && (c.disc || this.spanHasRare(beamIdx, beamIdx + 4));
+    else ok = c.cov >= 0.60 && c.disc;
+    if (!ok) return false;
+    this.engageLock(beamIdx);
+    return true;
   };
 
   Tracker.prototype.lockStep = function (inw) {
@@ -568,12 +659,54 @@
           // presumed to be the late batch landing, not a move by him.)
           this.anchor = beamIdx > this.anchor ? Math.min(beamIdx, this.anchor + 4) : Math.max(beamIdx, this.anchor - 2);
           this.stagRun = 0;
+        } else if (this.tryCoverageCatchup(beamIdx)) {
+          // the heard words prove the intervening lines were SAID —
+          // he flowed, the delivery lagged. Silent catch-up (already
+          // re-locked inside), no buzz, no divergence.
+          this.prevBeamIdx = beamIdx;
+          return;
+        } else if (this.dropoutFlag) {
+          // A mid-speech restart may have EATEN the intervening
+          // words. Don't accuse yet: watch the shadow — if it
+          // sustains a sequential run at the new place with a
+          // foreign discriminating word in the window, the network
+          // ate the gap and we rejoin silently. If the run breaks,
+          // the flag stays and the normal verdicts resume below on
+          // later leaps once the watch gives up (run reset).
+          if (this.dropWatchPos >= 0 && beamIdx >= this.dropWatchPos && beamIdx <= this.dropWatchPos + 3) {
+            this.dropWatchRun++;
+          } else {
+            this.dropWatchRun = 1;
+          }
+          this.dropWatchPos = beamIdx; // the window slides with the beam
+          if (this.dropWatchRun >= 5 && this.shadowWindowForeignRare(beamIdx)) {
+            this.engageLock(beamIdx);
+          }
+          this.stagRun = 0;
+          this.prevBeamIdx = beamIdx;
+          return;
+        } else if (this.lagging) {
+          // Blatant-only while the connection is degraded: a leap
+          // divergence now needs an extreme fit THERE, near-zero fit
+          // HERE, and a discriminating word in the shadow's window
+          // that doesn't live near the anchor (refrain-twin veto).
+          // Anything less freezes quietly — no buzz on suspicion.
+          if (fitThere >= 0.9 && fitHere < 0.35 && this.shadowWindowForeignRare(beamIdx)) {
+            this.mode = "diverged";
+            this.divCause = "leap";
+            this.frozenAnchor = this.anchor;
+            this.resumeRun = 0;
+            if (!this.buzzLatched && !this.dropoutFlag && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
+          }
+          this.stagRun = 0;
+          this.prevBeamIdx = beamIdx;
+          return;
         } else {
           this.mode = "diverged";
           this.divCause = fitThere >= 0.85 ? "leap" : "stagnation";
           this.frozenAnchor = this.anchor;
           this.resumeRun = 0;
-          if (!this.buzzLatched && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
+          if (!this.buzzLatched && !this.dropoutFlag && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
           this.prevBeamIdx = beamIdx;
           return;
         }
@@ -587,12 +720,14 @@
           this.stagRun = 0; // late/garbled batch — not evidence against him
         } else if (fit < 0.5) {
           this.stagRun = (this.stagRun || 0) + 1;
-          if (this.stagRun >= 5) {
+          // while lagging, stagnation must be blatant too: a single
+          // lag flush can burn 10 stagnant events in a second
+          if (this.stagRun >= (this.lagging ? 12 : 5)) {
             this.mode = "diverged";
             this.divCause = "stagnation"; // the EVIDENCE failed (recognizer burst), not necessarily him
             this.frozenAnchor = this.anchor;
             this.resumeRun = 0;
-            if (!this.buzzLatched && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
+            if (!this.buzzLatched && !this.dropoutFlag && this.eventsSeen - this.nudgeAt >= 30) { this._nudge = true; this.nudgeAt = this.eventsSeen; this.buzzLatched = true; }
           }
         } else {
           this.stagRun = 0;
@@ -604,6 +739,21 @@
       return;
     }
 
+    // SILENT CATCH-UP from diverged: if the words heard since prove
+    // the intervening lines were actually said (he flowed, delivery
+    // lagged), rejoin the shadow quietly — in every escape mode.
+    if (this.tryCoverageCatchup(beamIdx)) return;
+    // DROPOUT catch-up: a mid-speech restart ate the intervening
+    // audio; if the shadow now sustains a strong run at its new
+    // position WITH a discriminating word in the matched stretch,
+    // rejoin silently instead of treating it as a skip.
+    if (this.dropoutFlag && this.beamRun >= 8 &&
+        beamIdx > this.frozenAnchor && beamIdx <= this.frozenAnchor + 45 &&
+        (this.state === "locked" || this.state === "tentative") &&
+        this.shadowWindowForeignRare(beamIdx)) {
+      this.engageLock(beamIdx);
+      return;
+    }
     // diverged: display frozen; the beam (shadow) decides recovery.
     // A STAGNATION divergence heals automatically once the shadow is
     // clearly tracking again nearby — the recognizer burst passed and
