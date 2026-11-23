@@ -117,7 +117,9 @@
     { id:'anand', name:'ਅਨੰਦੁ ਸਾਹਿਬ', sub:'Anand Sahib · 210 lines', kind:'anand',
       json:'https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.json', audio:'https://karamofficial.github.io/gurbani-checker/data/anand-sahib/anand_sahib.mp3' },
     { id:'chaupai', name:'ਚੌਪਈ ਸਾਹਿਬ', sub:'Chaupai Sahib · 130 lines', kind:'sections',
-      json:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.json', audio:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.mp3' }
+      json:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.json', audio:'https://karamofficial.github.io/gurbani-checker/data/chaupai-sahib/chaupai_sahib.mp3' },
+    { id:'last5angs', name:'ਆਖਰੀ ੫ ਅੰਗ', sub:'Last 5 Angs · 1426–1430 · 205 lines', kind:'sections',
+      json:'https://karamofficial.github.io/gurbani-checker/data/last-5-angs/last_5_angs.json', audio:'https://karamofficial.github.io/gurbani-checker/data/last-5-angs/last_5_angs.mp3' }
   ];
   var curBani = BANIS[0];
   try { var savedBani = localStorage.getItem('cracker-bani'); BANIS.forEach(function(b){ if (b.id === savedBani) curBani = b; }); } catch(e){}
