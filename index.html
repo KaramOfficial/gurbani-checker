@@ -199,28 +199,24 @@
        native element for that file only. All page code talks to this
        facade through the same interface the <audio> element had. */
     function makeEngine(el,scrub){
-      var listeners={},wa=null,gain=null,buf=null,srcNode=null,playing=false,base=0,t0=0,rate=1,vol=1,mode='wa',pendingSrc=null,ticker=null,gen=0,scrubHold=0;
+      var listeners={},wa=null,gain=null,buf=null,srcNode=null,playing=false,base=0,t0=0,rate=1,vol=1,mode='wa',pendingSrc=null,ticker=null,gen=0,scrubHold=0,wantPlay=false;
       function emit(ev){var l=listeners[ev];if(l)l.slice().forEach(function(f){try{f()}catch(e){}})}
       function pos(){if(mode!=='wa')return el.currentTime||0;if(!buf)return base;if(!playing)return base;return Math.min(base+(wa.currentTime-t0)*rate,buf.duration)}
       function startTicker(){if(ticker)return;ticker=setInterval(function(){emit('timeupdate');if(buf&&Date.now()-scrubHold>300)scrub.value=String(Math.max(0,Math.min(1000,Math.round(pos()/buf.duration*1000))))},40)}
       function stopTicker(){if(ticker){clearInterval(ticker);ticker=null}}
       function stopSrc(){if(srcNode){var n=srcNode;srcNode=null;n.onended=null;try{n.stop()}catch(e){}}}
       function startSrc(){stopSrc();srcNode=wa.createBufferSource();srcNode.buffer=buf;srcNode.playbackRate.value=rate;srcNode.connect(gain);var off=Math.max(0,Math.min(base,buf.duration-0.03));srcNode.onended=function(){if(playing&&pos()>=buf.duration-0.05){playing=false;base=buf.duration;stopTicker();emit('pause');emit('ended');emit('timeupdate')}};srcNode.start(0,off);t0=wa.currentTime;base=off}
-      function toEl(url){mode='el';buf=null;el.style.display='';scrub.style.display='none';el.src=url;el.load()}
+      function decodeIt(ab,myGen){if(!wa){var AC=window.AudioContext||window.webkitAudioContext;wa=new AC()}if(gain){try{gain.disconnect()}catch(e){}}gain=wa.createGain();gain.gain.value=vol;gain.connect(wa.destination);var Off=window.OfflineAudioContext||window.webkitOfflineAudioContext,off=new Off(1,1,22050);return new Promise(function(res,rej){var dp;try{dp=off.decodeAudioData(ab,function(b){res(b)},function(e){rej(e)})}catch(e){rej(e)}if(dp&&dp.catch)dp.catch(rej)}).then(function(b){if(myGen!==gen)return '__handled__';buf=b;mode='wa';el.style.display='none';scrub.style.display='block';emit('loadedmetadata');emit('timeupdate');if(wantPlay){wantPlay=false;api.play()}return '__handled__'})}function toEl(url){mode='el';buf=null;el.style.display='';scrub.style.display='none';el.src=url;el.load()}
       ['play','pause','ended','timeupdate','seeked','loadedmetadata'].forEach(function(ev){el.addEventListener(ev,function(){if(mode==='el')emit(ev)})});
       scrub.addEventListener('input',function(){scrubHold=Date.now();if(mode==='wa'&&buf)api.currentTime=Number(scrub.value)/1000*buf.duration});
       var api={
         addEventListener:function(ev,f){(listeners[ev]=listeners[ev]||[]).push(f)},
-        load:function(){var url=pendingSrc;if(!url)return;var myGen=++gen;playing=false;stopSrc();stopTicker();base=0;buf=null;
+        load:function(){var url=pendingSrc;if(!url)return;var myGen=++gen;playing=false;wantPlay=false;stopSrc();stopTicker();base=0;buf=null;
           if(!window.AudioContext&&!window.webkitAudioContext){toEl(url);return}
-          fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(function(ab){if(myGen!==gen)return null;
-            if(!wa){var AC=window.AudioContext||window.webkitAudioContext;wa=new AC()}
-            if(gain){try{gain.disconnect()}catch(e){}}
-            gain=wa.createGain();gain.gain.value=vol;gain.connect(wa.destination);
-            var Off=window.OfflineAudioContext||window.webkitOfflineAudioContext;
-            return new Off(1,1,22050).decodeAudioData(ab)}).then(function(b){if(!b||myGen!==gen)return;buf=b;mode='wa';el.style.display='none';scrub.style.display='block';emit('loadedmetadata');emit('timeupdate')}).catch(function(){if(myGen===gen)toEl(url)})},
-        play:function(){if(mode!=='wa')return el.play();if(!buf)return Promise.resolve();if(wa.state==='suspended')wa.resume();if(playing)return Promise.resolve();if(base>=buf.duration-0.02)base=0;playing=true;startSrc();startTicker();emit('play');emit('timeupdate');return Promise.resolve()},
-        pause:function(){if(mode!=='wa'){el.pause();return}if(!playing)return;base=pos();playing=false;stopSrc();stopTicker();emit('pause');emit('timeupdate')}
+          fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(function(ab){if(myGen!==gen)return null;if(ab.byteLength>3000000){return new Promise(function(res){var probe=new Audio();probe.preload='metadata';probe.onloadedmetadata=function(){var d=probe.duration;probe.src='';res(isFinite(d)&&d>1500?'LONG':ab)};probe.onerror=function(){res(ab)};probe.src=url}).then(function(v){if(v==='LONG'){toEl(url);return null}return decodeIt(v,myGen)})}return decodeIt(ab,myGen)}).then(function(b){if(b==='__handled__')return;
+            return null}).catch(function(){if(myGen===gen)toEl(url)})},
+        play:function(){if(mode!=='wa')return el.play();if(!buf){wantPlay=true;return Promise.resolve()}if(wa.state==='suspended')wa.resume();if(playing)return Promise.resolve();if(base>=buf.duration-0.02)base=0;playing=true;startSrc();startTicker();emit('play');emit('timeupdate');return Promise.resolve()},
+        pause:function(){wantPlay=false;if(mode!=='wa'){el.pause();return}if(!playing)return;base=pos();playing=false;stopSrc();stopTicker();emit('pause');emit('timeupdate')}
       };
       Object.defineProperties(api,{
         paused:{get:function(){return mode==='wa'?!playing:el.paused}},
