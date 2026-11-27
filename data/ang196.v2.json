@@ -1,6 +1,6 @@
 {
- "audio": "audio/ang1.mp3",
- "text": "text/ang1.txt",
+ "audio": "audio/ang196.mp3",
+ "text": "text/ang196.txt",
  "duration": 334.66,
  "model": "V2.1: per-line CTC (mid/wide windows, guarded) + energy snap + burst-chain clamp",
  "lines": [
