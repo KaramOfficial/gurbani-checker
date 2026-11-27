@@ -1,0 +1,51 @@
+{
+ "bani": "Anand Sahib",
+ "bani_gurmukhi": "ਅਨੰਦੁ ਸਾਹਿਬ",
+ "source_audio": "anand_sahib.mp3 (original joined Sehaj Paath recording)",
+ "timing_file": "../anand_sahib.json",
+ "track_start_in_source": 0.0,
+ "total_duration": 2417.021,
+ "cut_rule": "pankti boundaries, each cut placed at the deepest silence in the inter-line gap",
+ "chunks": [
+  {
+   "file": "chunk01.mp3",
+   "global_start": 0.0,
+   "duration": 315.65
+  },
+  {
+   "file": "chunk02.mp3",
+   "global_start": 315.654,
+   "duration": 307.63
+  },
+  {
+   "file": "chunk03.mp3",
+   "global_start": 623.284,
+   "duration": 309.13
+  },
+  {
+   "file": "chunk04.mp3",
+   "global_start": 932.414,
+   "duration": 302.3
+  },
+  {
+   "file": "chunk05.mp3",
+   "global_start": 1234.714,
+   "duration": 301.9
+  },
+  {
+   "file": "chunk06.mp3",
+   "global_start": 1536.614,
+   "duration": 305.53
+  },
+  {
+   "file": "chunk07.mp3",
+   "global_start": 1842.143,
+   "duration": 312.751
+  },
+  {
+   "file": "chunk08.mp3",
+   "global_start": 2154.894,
+   "duration": 262.13
+  }
+ ]
+}
