@@ -129,7 +129,7 @@
       <div class="panel-foot"><h2 class="bar-title">Timestamped transcript</h2><span class="status" id="status" aria-live="polite">Loading timestamps…</span><span class="shortcut"><kbd>Space</kbd> play / pause · <kbd>←</kbd> <kbd>→</kbd> 5 seconds</span><div class="actions"><span><a class="download" id="download-json" href="#">JSON</a> · <a class="download" id="download-srt" href="#">SRT</a></span></div></div>
     </section>
 
-    <div class="playerbar-wrap" aria-label="Player"><div class="playerbar"><button class="play-btn" id="play-toggle" type="button" aria-label="Play or pause">▶</button><div class="transport"><button class="step" id="back" type="button" aria-label="Back 5 seconds">−5</button><span class="time" id="time">0:00 / 0:00</span><button class="step" id="forward" type="button" aria-label="Forward 5 seconds">+5</button></div><audio id="player" controls preload="metadata"></audio><label class="speed">Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label></div><p class="readout idle" id="landing" role="status">Tap any word — target vs landed diff shows here</p></div>
+    <div class="playerbar-wrap" aria-label="Player"><div class="playerbar"><button class="play-btn" id="play-toggle" type="button" aria-label="Play or pause">▶</button><div class="transport"><button class="step" id="back" type="button" aria-label="Back 5 seconds">−5</button><span class="time" id="time">0:00 / 0:00</span><button class="step" id="forward" type="button" aria-label="Forward 5 seconds">+5</button></div><audio id="player-el" controls preload="metadata" style="display:none"></audio><input id="wa-scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek" style="display:none;flex:1;min-width:0;accent-color:#e8590c"><label class="speed">Speed <select id="speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label></div><p class="readout idle" id="landing" role="status">Tap any word — target vs landed diff shows here</p></div>
     <section id="transcript" class="transcript" aria-label="Timestamped transcript"><div class="empty">Loading transcript…</div></section>
     <p class="footnote" id="footnote">Direct timings come from the model alignment; interpolated timings bridge unmatched words.</p>
   </main>
@@ -169,7 +169,7 @@
     var cache={}, currentData=null, currentAng=1, currentApproach='ctc', loadToken=0;var v2cache={}, pendingSeek=null, seekTimer=null, contestedSet={}, fixedSet={}, v3Set={}, underlineSet={}, underlineClass='contested', lastClick=null, rafOn=false;function fetchV2(ang){if(ang<1||ang>1430)return Promise.resolve(null);if(v2cache[ang])return Promise.resolve(v2cache[ang]);return fetch('data/ang'+ang+'.v2.json?v=21').then(function(r){return r.ok?r.json():null}).then(function(d){v2cache[ang]=d;return d}).catch(function(){return null})};var v3cache={};function fetchV3(ang){if(ang<1||ang>1430)return Promise.resolve(null);if(v3cache[ang])return Promise.resolve(v3cache[ang]);return fetch('data/ang'+ang+'.v3.json?v=6').then(function(r){return r.ok?r.json():null}).then(function(d){v3cache[ang]=d;return d}).catch(function(){return null})}
     var mode='angs', currentBani=null, baniHeads=[];
     var flatWords=[], activeIndex=-1, activeLine=null, autoScroll=true, objectUrls=[];
-    var recording=document.getElementById('recording'), player=document.getElementById('player'), transcript=document.getElementById('transcript');
+    var recording=document.getElementById('recording'), playerEl=document.getElementById('player-el'), transcript=document.getElementById('transcript');
     var status=document.getElementById('status'), time=document.getElementById('time'), notice=document.getElementById('notice');
     var metricAlign=document.getElementById('metric-align'), metricInterpolated=document.getElementById('metric-interpolated'), metricShort=document.getElementById('metric-short'), metricLong=document.getElementById('metric-long');
     var downloadJson=document.getElementById('download-json'), downloadSrt=document.getElementById('download-srt'), approachCopy=document.getElementById('approach-copy');var landing=document.getElementById('landing'), flagsEl=document.getElementById('flags'),flagsToggle=document.getElementById('flags-toggle');function syncFlags(){var has=!!flagsEl.textContent;flagsToggle.classList.toggle('hidden',!has);flagsEl.classList.remove('open');flagsToggle.textContent='Show all'}flagsToggle.addEventListener('click',function(){var open=flagsEl.classList.toggle('open');flagsToggle.textContent=open?'Show less':'Show all'});
@@ -190,6 +190,50 @@
     function setAngAudio(ang,token){if(blobUrl){URL.revokeObjectURL(blobUrl);blobUrl=null}if(!HOSTED_AUDIO[ang]){player.src=audioUrl(ang);player.load();return}fetch('audio/ang'+ang+'.mp3').then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.blob()}).then(function(b){if(token!==loadToken)return;blobUrl=URL.createObjectURL(b);player.src=blobUrl;player.load()}).catch(function(){if(token!==loadToken)return;player.src=audioUrl(ang);player.load()})}
     function fetchChunk(chunk){if(cache[chunk.file])return Promise.resolve(cache[chunk.file]);return fetch(CHUNK_PATH+chunk.file).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(d){cache[chunk.file]=d;return d})}
     function clearActive(){if(activeIndex>=0&&flatWords[activeIndex])flatWords[activeIndex].el.classList.remove('active');if(activeLine)activeLine.classList.remove('active');activeIndex=-1;activeLine=null}
+
+    /* Single playback engine for every browser: WebAudio buffer playback
+       (sample-exact starts, no media-element seek error, no wake-up clip).
+       The file is decoded once to a mono 22.05kHz buffer (speech does not
+       need stereo/48k; ~29MB for a 6-minute Ang). If WebAudio or the fetch
+       fails (e.g. a CORS-blocked external file), it falls back to the
+       native element for that file only. All page code talks to this
+       facade through the same interface the <audio> element had. */
+    function makeEngine(el,scrub){
+      var listeners={},wa=null,gain=null,buf=null,srcNode=null,playing=false,base=0,t0=0,rate=1,vol=1,mode='wa',pendingSrc=null,ticker=null,gen=0,scrubHold=0;
+      function emit(ev){var l=listeners[ev];if(l)l.slice().forEach(function(f){try{f()}catch(e){}})}
+      function pos(){if(mode!=='wa')return el.currentTime||0;if(!buf)return base;if(!playing)return base;return Math.min(base+(wa.currentTime-t0)*rate,buf.duration)}
+      function startTicker(){if(ticker)return;ticker=setInterval(function(){emit('timeupdate');if(buf&&Date.now()-scrubHold>300)scrub.value=String(Math.max(0,Math.min(1000,Math.round(pos()/buf.duration*1000))))},40)}
+      function stopTicker(){if(ticker){clearInterval(ticker);ticker=null}}
+      function stopSrc(){if(srcNode){var n=srcNode;srcNode=null;n.onended=null;try{n.stop()}catch(e){}}}
+      function startSrc(){stopSrc();srcNode=wa.createBufferSource();srcNode.buffer=buf;srcNode.playbackRate.value=rate;srcNode.connect(gain);var off=Math.max(0,Math.min(base,buf.duration-0.03));srcNode.onended=function(){if(playing&&pos()>=buf.duration-0.05){playing=false;base=buf.duration;stopTicker();emit('pause');emit('ended');emit('timeupdate')}};srcNode.start(0,off);t0=wa.currentTime;base=off}
+      function toEl(url){mode='el';buf=null;el.style.display='';scrub.style.display='none';el.src=url;el.load()}
+      ['play','pause','ended','timeupdate','seeked','loadedmetadata'].forEach(function(ev){el.addEventListener(ev,function(){if(mode==='el')emit(ev)})});
+      scrub.addEventListener('input',function(){scrubHold=Date.now();if(mode==='wa'&&buf)api.currentTime=Number(scrub.value)/1000*buf.duration});
+      var api={
+        addEventListener:function(ev,f){(listeners[ev]=listeners[ev]||[]).push(f)},
+        load:function(){var url=pendingSrc;if(!url)return;var myGen=++gen;playing=false;stopSrc();stopTicker();base=0;buf=null;
+          if(!window.AudioContext&&!window.webkitAudioContext){toEl(url);return}
+          fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer()}).then(function(ab){if(myGen!==gen)return null;
+            if(!wa){var AC=window.AudioContext||window.webkitAudioContext;wa=new AC()}
+            if(gain){try{gain.disconnect()}catch(e){}}
+            gain=wa.createGain();gain.gain.value=vol;gain.connect(wa.destination);
+            var Off=window.OfflineAudioContext||window.webkitOfflineAudioContext;
+            return new Off(1,1,22050).decodeAudioData(ab)}).then(function(b){if(!b||myGen!==gen)return;buf=b;mode='wa';el.style.display='none';scrub.style.display='block';emit('loadedmetadata');emit('timeupdate')}).catch(function(){if(myGen===gen)toEl(url)})},
+        play:function(){if(mode!=='wa')return el.play();if(!buf)return Promise.resolve();if(wa.state==='suspended')wa.resume();if(playing)return Promise.resolve();if(base>=buf.duration-0.02)base=0;playing=true;startSrc();startTicker();emit('play');emit('timeupdate');return Promise.resolve()},
+        pause:function(){if(mode!=='wa'){el.pause();return}if(!playing)return;base=pos();playing=false;stopSrc();stopTicker();emit('pause');emit('timeupdate')}
+      };
+      Object.defineProperties(api,{
+        paused:{get:function(){return mode==='wa'?!playing:el.paused}},
+        currentTime:{get:function(){return mode==='wa'?pos():(el.currentTime||0)},set:function(v){if(mode!=='wa'){try{el.currentTime=v}catch(e){}return}if(!buf){base=Math.max(0,v);return}base=Math.max(0,Math.min(v,buf.duration));if(playing)startSrc();emit('seeked');emit('timeupdate')}},
+        duration:{get:function(){return mode==='wa'?(buf?buf.duration:NaN):el.duration}},
+        readyState:{get:function(){return mode==='wa'?(buf?4:0):el.readyState}},
+        playbackRate:{get:function(){return mode==='wa'?rate:el.playbackRate},set:function(v){if(mode!=='wa'){el.playbackRate=v;return}if(playing)base=pos();rate=v;if(playing)startSrc()}},
+        volume:{get:function(){return mode==='wa'?vol:el.volume},set:function(v){vol=v;if(mode==='wa'){if(gain)gain.gain.value=v}else el.volume=v}},
+        src:{get:function(){return pendingSrc||''},set:function(v){pendingSrc=v}}
+      });
+      return api;
+    }
+    var player=makeEngine(playerEl,document.getElementById('wa-scrub'));
     function seek(seconds,play){var dur=player.duration,t=isFinite(dur)?Math.max(0,Math.min(seconds,Math.max(0,dur-0.05))):Math.max(0,seconds);if(!play){pendingSeek=null;lastClick=null;prerollAt=null;player.volume=1;landing.textContent='Tap any word — target vs landed diff shows here';landing.classList.add('idle');if(seekTimer){clearTimeout(seekTimer);seekTimer=null}try{player.currentTime=t}catch(e){}return}pendingSeek={target:t,play:true,tries:0,pre:Math.max(0,t-0.30)};prerollAt=Math.max(0,t-0.03);player.volume=0;try{player.currentTime=pendingSeek.pre}catch(e){}var prp=player.play();if(prp&&prp.catch)prp.catch(function(){});armSeekTimer();setTimeout(function(){if(prerollAt!==null&&!player.paused){player.volume=1;prerollAt=null}},1500)}
     function armSeekTimer(){if(seekTimer)clearTimeout(seekTimer);seekTimer=setTimeout(settleSeek,1600)}
     function settleSeek(){if(seekTimer){clearTimeout(seekTimer);seekTimer=null}var ps=pendingSeek;pendingSeek=null;if(ps&&ps.play){var p=player.play();if(p&&p.catch)p.catch(function(){})}}
