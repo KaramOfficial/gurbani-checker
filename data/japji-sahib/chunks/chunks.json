@@ -1,0 +1,61 @@
+{
+ "bani": "Japji Sahib",
+ "bani_gurmukhi": "ਜਪੁਜੀ ਸਾਹਿਬ",
+ "source_audio": "japji_sahib.mp3 (original joined Sehaj Paath recording)",
+ "timing_file": "../japji_sahib.json",
+ "track_start_in_source": 0.0,
+ "total_duration": 2956.774,
+ "cut_rule": "pankti boundaries, each cut placed at the deepest silence in the inter-line gap",
+ "chunks": [
+  {
+   "file": "chunk01.mp3",
+   "global_start": 0.0,
+   "duration": 303.39
+  },
+  {
+   "file": "chunk02.mp3",
+   "global_start": 303.39,
+   "duration": 300.73
+  },
+  {
+   "file": "chunk03.mp3",
+   "global_start": 604.12,
+   "duration": 300.11
+  },
+  {
+   "file": "chunk04.mp3",
+   "global_start": 904.23,
+   "duration": 303.18
+  },
+  {
+   "file": "chunk05.mp3",
+   "global_start": 1207.41,
+   "duration": 313.83
+  },
+  {
+   "file": "chunk06.mp3",
+   "global_start": 1521.24,
+   "duration": 302.97
+  },
+  {
+   "file": "chunk07.mp3",
+   "global_start": 1824.21,
+   "duration": 301.58
+  },
+  {
+   "file": "chunk08.mp3",
+   "global_start": 2125.79,
+   "duration": 306.1
+  },
+  {
+   "file": "chunk09.mp3",
+   "global_start": 2431.89,
+   "duration": 304.92
+  },
+  {
+   "file": "chunk10.mp3",
+   "global_start": 2736.81,
+   "duration": 219.964
+  }
+ ]
+}

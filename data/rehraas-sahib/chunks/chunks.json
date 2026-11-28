@@ -1,0 +1,56 @@
+{
+ "bani": "Rehraas Sahib",
+ "bani_gurmukhi": "ਰਹਰਾਸਿ ਸਾਹਿਬ",
+ "source_audio": "rehraas_sahib.mp3 (original joined Sehaj Paath recording)",
+ "timing_file": "../rehraas_sahib.json",
+ "track_start_in_source": 0.0,
+ "total_duration": 2721.489,
+ "cut_rule": "pankti boundaries, each cut placed at the deepest silence in the inter-line gap",
+ "chunks": [
+  {
+   "file": "chunk01.mp3",
+   "global_start": 0.0,
+   "duration": 305.27
+  },
+  {
+   "file": "chunk02.mp3",
+   "global_start": 305.27,
+   "duration": 311.61
+  },
+  {
+   "file": "chunk03.mp3",
+   "global_start": 616.88,
+   "duration": 332.62
+  },
+  {
+   "file": "chunk04.mp3",
+   "global_start": 949.5,
+   "duration": 303.07
+  },
+  {
+   "file": "chunk05.mp3",
+   "global_start": 1252.57,
+   "duration": 300.25
+  },
+  {
+   "file": "chunk06.mp3",
+   "global_start": 1552.82,
+   "duration": 307.83
+  },
+  {
+   "file": "chunk07.mp3",
+   "global_start": 1860.65,
+   "duration": 309.3
+  },
+  {
+   "file": "chunk08.mp3",
+   "global_start": 2169.95,
+   "duration": 314.97
+  },
+  {
+   "file": "chunk09.mp3",
+   "global_start": 2484.92,
+   "duration": 236.569
+  }
+ ]
+}

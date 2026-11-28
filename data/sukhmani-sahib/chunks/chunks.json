@@ -1,0 +1,251 @@
+{
+ "bani": "Sukhmani Sahib",
+ "bani_gurmukhi": "ਸੁਖਮਨੀ ਸਾਹਿਬ",
+ "source_audio": "sukhmani_sahib.mp3 (original joined Sehaj Paath recording)",
+ "timing_file": "../sukhmani_sahib.json",
+ "track_start_in_source": 0.0,
+ "total_duration": 14860.466,
+ "cut_rule": "pankti boundaries, each cut placed at the deepest silence in the inter-line gap",
+ "chunks": [
+  {
+   "file": "chunk01.mp3",
+   "global_start": 0.0,
+   "duration": 308.55
+  },
+  {
+   "file": "chunk02.mp3",
+   "global_start": 308.55,
+   "duration": 306.23
+  },
+  {
+   "file": "chunk03.mp3",
+   "global_start": 614.78,
+   "duration": 307.14
+  },
+  {
+   "file": "chunk04.mp3",
+   "global_start": 921.92,
+   "duration": 311.27
+  },
+  {
+   "file": "chunk05.mp3",
+   "global_start": 1233.19,
+   "duration": 300.43
+  },
+  {
+   "file": "chunk06.mp3",
+   "global_start": 1533.62,
+   "duration": 305.63
+  },
+  {
+   "file": "chunk07.mp3",
+   "global_start": 1839.25,
+   "duration": 309.71
+  },
+  {
+   "file": "chunk08.mp3",
+   "global_start": 2148.96,
+   "duration": 308.15
+  },
+  {
+   "file": "chunk09.mp3",
+   "global_start": 2457.11,
+   "duration": 311.37
+  },
+  {
+   "file": "chunk10.mp3",
+   "global_start": 2768.48,
+   "duration": 301.16
+  },
+  {
+   "file": "chunk11.mp3",
+   "global_start": 3069.64,
+   "duration": 306.78
+  },
+  {
+   "file": "chunk12.mp3",
+   "global_start": 3376.42,
+   "duration": 304.81
+  },
+  {
+   "file": "chunk13.mp3",
+   "global_start": 3681.23,
+   "duration": 300.79
+  },
+  {
+   "file": "chunk14.mp3",
+   "global_start": 3982.02,
+   "duration": 306.35
+  },
+  {
+   "file": "chunk15.mp3",
+   "global_start": 4288.37,
+   "duration": 303.35
+  },
+  {
+   "file": "chunk16.mp3",
+   "global_start": 4591.72,
+   "duration": 304.91
+  },
+  {
+   "file": "chunk17.mp3",
+   "global_start": 4896.63,
+   "duration": 307.35
+  },
+  {
+   "file": "chunk18.mp3",
+   "global_start": 5203.98,
+   "duration": 307.28
+  },
+  {
+   "file": "chunk19.mp3",
+   "global_start": 5511.261,
+   "duration": 301.23
+  },
+  {
+   "file": "chunk20.mp3",
+   "global_start": 5812.491,
+   "duration": 306.91
+  },
+  {
+   "file": "chunk21.mp3",
+   "global_start": 6119.401,
+   "duration": 306.41
+  },
+  {
+   "file": "chunk22.mp3",
+   "global_start": 6425.811,
+   "duration": 306.732
+  },
+  {
+   "file": "chunk23.mp3",
+   "global_start": 6732.543,
+   "duration": 302.3
+  },
+  {
+   "file": "chunk24.mp3",
+   "global_start": 7034.843,
+   "duration": 306.08
+  },
+  {
+   "file": "chunk25.mp3",
+   "global_start": 7340.923,
+   "duration": 329.04
+  },
+  {
+   "file": "chunk26.mp3",
+   "global_start": 7669.963,
+   "duration": 304.09
+  },
+  {
+   "file": "chunk27.mp3",
+   "global_start": 7974.053,
+   "duration": 303.46
+  },
+  {
+   "file": "chunk28.mp3",
+   "global_start": 8277.513,
+   "duration": 302.86
+  },
+  {
+   "file": "chunk29.mp3",
+   "global_start": 8580.373,
+   "duration": 312.23
+  },
+  {
+   "file": "chunk30.mp3",
+   "global_start": 8892.603,
+   "duration": 315.05
+  },
+  {
+   "file": "chunk31.mp3",
+   "global_start": 9207.653,
+   "duration": 302.32
+  },
+  {
+   "file": "chunk32.mp3",
+   "global_start": 9509.973,
+   "duration": 303.65
+  },
+  {
+   "file": "chunk33.mp3",
+   "global_start": 9813.623,
+   "duration": 303.8
+  },
+  {
+   "file": "chunk34.mp3",
+   "global_start": 10117.423,
+   "duration": 326.86
+  },
+  {
+   "file": "chunk35.mp3",
+   "global_start": 10444.283,
+   "duration": 304.93
+  },
+  {
+   "file": "chunk36.mp3",
+   "global_start": 10749.213,
+   "duration": 308.67
+  },
+  {
+   "file": "chunk37.mp3",
+   "global_start": 11057.883,
+   "duration": 306.92
+  },
+  {
+   "file": "chunk38.mp3",
+   "global_start": 11364.803,
+   "duration": 303.59
+  },
+  {
+   "file": "chunk39.mp3",
+   "global_start": 11668.393,
+   "duration": 305.27
+  },
+  {
+   "file": "chunk40.mp3",
+   "global_start": 11973.664,
+   "duration": 304.45
+  },
+  {
+   "file": "chunk41.mp3",
+   "global_start": 12278.114,
+   "duration": 305.89
+  },
+  {
+   "file": "chunk42.mp3",
+   "global_start": 12584.004,
+   "duration": 303.79
+  },
+  {
+   "file": "chunk43.mp3",
+   "global_start": 12887.794,
+   "duration": 303.48
+  },
+  {
+   "file": "chunk44.mp3",
+   "global_start": 13191.274,
+   "duration": 304.76
+  },
+  {
+   "file": "chunk45.mp3",
+   "global_start": 13496.034,
+   "duration": 304.53
+  },
+  {
+   "file": "chunk46.mp3",
+   "global_start": 13800.564,
+   "duration": 301.28
+  },
+  {
+   "file": "chunk47.mp3",
+   "global_start": 14101.844,
+   "duration": 300.68
+  },
+  {
+   "file": "chunk48.mp3",
+   "global_start": 14402.524,
+   "duration": 457.943
+  }
+ ]
+}
